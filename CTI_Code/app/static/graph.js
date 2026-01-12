@@ -78,7 +78,7 @@ function ensureLegend() {
   legend.style.padding = "10px 12px";
   legend.style.fontSize = "12px";
   legend.style.boxShadow = "0 2px 10px rgba(0,0,0,0.1)";
-  legend.style.maxWidth = "320px";
+  legend.style.maxWidth = "340px";
 
   const rows = [
     ["USES", edgeColor("USES")],
@@ -97,14 +97,108 @@ function ensureLegend() {
         <span>${t}</span>
       </div>
     `).join("")}
-    <div style="margin-top:8px; opacity:.8; line-height:1.3;">
+    <div style="margin-top:8px; opacity:.85; line-height:1.35;">
       <div><b>Drag</b>: uzel se “připíchne” (zůstane na místě)</div>
       <div><b>Dvojklik</b>: unpin (vrátí se do simulace)</div>
       <div><b>P</b>: pin/unpin ALL</div>
+      <div><b>Klik</b>: detail panel (Neo4j)</div>
+      <div><b>SHIFT+klik</b>: drill-down (načte subgraph)</div>
     </div>
   `;
-
   document.body.appendChild(legend);
+}
+
+// ---------- Context panel (sidebar) ----------
+function ensureCtxPanel() {
+  if (document.getElementById("ctx")) return;
+
+  const panel = document.createElement("div");
+  panel.id = "ctx";
+  panel.style.position = "fixed";
+  panel.style.top = "70px";
+  panel.style.right = "12px";
+  panel.style.width = "380px";
+  panel.style.maxHeight = "calc(100vh - 90px)";
+  panel.style.overflow = "auto";
+  panel.style.background = "rgba(255,255,255,0.97)";
+  panel.style.border = "1px solid rgba(0,0,0,0.15)";
+  panel.style.borderRadius = "14px";
+  panel.style.padding = "12px 12px 10px";
+  panel.style.boxShadow = "0 10px 30px rgba(0,0,0,0.15)";
+  panel.style.display = "none";
+  panel.style.zIndex = "9999";
+
+  panel.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+      <div id="ctxTitle" style="font-weight:700; font-size:14px;">Node</div>
+      <button id="ctxClose" style="border:1px solid #0002; background:#fff; border-radius:10px; padding:4px 10px; cursor:pointer;">×</button>
+    </div>
+    <div id="ctxMeta" style="margin-top:6px; font-size:12px; opacity:.75;"></div>
+    <hr style="border:none; border-top:1px solid #0001; margin:10px 0;">
+    <div style="font-weight:600; font-size:13px; margin-bottom:6px;">Properties</div>
+    <pre id="ctxProps" style="white-space:pre-wrap; font-size:12px; background:#f6f6f6; padding:10px; border-radius:12px; margin:0;"></pre>
+    <div style="font-weight:600; font-size:13px; margin:10px 0 6px;">Neighbors</div>
+    <div id="ctxNeigh" style="font-size:12px;"></div>
+  `;
+
+  document.body.appendChild(panel);
+
+  document.getElementById("ctxClose").onclick = () => {
+    panel.style.display = "none";
+  };
+}
+
+function showCtxPanel(node) {
+  ensureCtxPanel();
+  const panel = document.getElementById("ctx");
+  panel.style.display = "block";
+
+  document.getElementById("ctxTitle").textContent = node.title || node.id;
+  document.getElementById("ctxMeta").textContent =
+    `${(node.labels || []).join(", ")}${node.entity_type ? " | " + node.entity_type : ""} | id=${node.id}`;
+
+  document.getElementById("ctxProps").textContent = "Loading...";
+  document.getElementById("ctxNeigh").innerHTML = "Loading...";
+}
+
+function renderCtxDetails(d) {
+  document.getElementById("ctxTitle").textContent = d.title || d.id;
+  document.getElementById("ctxMeta").textContent =
+    `${(d.labels || []).join(", ")}${d.entity_type ? " | " + d.entity_type : ""} | id=${d.id}`;
+
+  document.getElementById("ctxProps").textContent = JSON.stringify(d.props || {}, null, 2);
+
+  const byRel = new Map();
+  (d.neighbors || []).forEach(n => {
+    const key = `${n.dir} ${n.rel}`;
+    if (!byRel.has(key)) byRel.set(key, []);
+    byRel.get(key).push(n);
+  });
+
+  const container = document.getElementById("ctxNeigh");
+  container.innerHTML = "";
+
+  for (const [k, arr] of byRel.entries()) {
+    const wrap = document.createElement("div");
+    wrap.style.marginBottom = "10px";
+
+    const h = document.createElement("div");
+    h.style.fontWeight = "700";
+    h.style.marginBottom = "4px";
+    h.textContent = `${k} (${arr.length})`;
+    wrap.appendChild(h);
+
+    arr.slice(0, 40).forEach(x => {
+      const line = document.createElement("div");
+      line.style.padding = "2px 0";
+      line.style.cursor = "pointer";
+      line.textContent = `• ${x.other_title} [${(x.other_labels || []).join(", ")}]`;
+      line.onclick = () => loadGraph(x.other_id);
+      wrap.appendChild(line);
+    });
+
+    container.appendChild(wrap);
+  }
 }
 
 // ---------- API ----------
@@ -147,15 +241,20 @@ async function loadGraph(node_id) {
   draw(data.nodes || [], data.edges || []);
 }
 
+async function loadNodeDetails(node) {
+  showCtxPanel(node);
+  const details = await apiJson(`/api/node?id=${encodeURIComponent(node.id)}&neigh_limit=120`);
+  if (details) renderCtxDetails(details);
+}
+
 // ---------- draw ----------
 let currentSim = null;
 let currentNodes = [];
-let currentTexts = null;
-let currentNodeSel = null;
 
 function draw(nodes, edges) {
   ensureLabelToggle();
   ensureLegend();
+  ensureCtxPanel();
 
   currentNodes = nodes;
 
@@ -188,12 +287,12 @@ function draw(nodes, edges) {
     .filter(e => nodeById.has(e.source) && nodeById.has(e.target))
     .map(e => ({ ...e }));
 
-  // Force simulation: méně "chumlu", víc prostoru pro labely
+  // Force simulation: víc místa pro labely, méně chumlu
   const sim = d3.forceSimulation(nodes)
-    .force("link", d3.forceLink(links).id(d => d.id).distance(95))
-    .force("charge", d3.forceManyBody().strength(-180))         // méně agresivní
+    .force("link", d3.forceLink(links).id(d => d.id).distance(105))
+    .force("charge", d3.forceManyBody().strength(-170))
     .force("center", d3.forceCenter(width / 2, height / 2))
-    .force("collide", d3.forceCollide().radius(d => radiusFor(d) + 12)) // víc místa pro text
+    .force("collide", d3.forceCollide().radius(d => radiusFor(d) + 14))
     .force("x", d3.forceX(width / 2).strength(0.03))
     .force("y", d3.forceY(height / 2).strength(0.03));
 
@@ -211,7 +310,7 @@ function draw(nodes, edges) {
 
   link.append("title").text(d => d.type);
 
-  // drag behavior: PO PUŠTĚNÍ UZEL ZŮSTANE (pin)
+  // drag behavior: po puštění uzel zůstane (PIN)
   function dragstarted(event, d) {
     if (!event.active) sim.alphaTarget(0.2).restart();
     d.fx = d.x;
@@ -222,9 +321,8 @@ function draw(nodes, edges) {
     d.fy = event.y;
   }
   function dragended(event, d) {
-    // NEVRACÍME fx/fy na null => uzel zůstane tam, kam ho pustíš
     if (!event.active) sim.alphaTarget(0);
-    d.pinned = true;
+    d.pinned = true; // fx/fy zůstávají nastavené
   }
 
   // nodes
@@ -236,23 +334,28 @@ function draw(nodes, edges) {
     .attr("fill", d => nodeColor(d))
     .attr("stroke", "rgba(0,0,0,0.25)")
     .attr("stroke-width", 1)
-    .on("click", (_, d) => loadGraph(d.id)) // drill-down
-    .on("dblclick", (_, d) => {             // unpin
+    .on("click", async (event, d) => {
+      // SHIFT+klik = drill-down, normální klik = panel s detaily
+      if (event.shiftKey) {
+        await loadGraph(d.id);
+      } else {
+        await loadNodeDetails(d);
+      }
+    })
+    .on("dblclick", (_, d) => { // UNPIN
       d.fx = null;
       d.fy = null;
       d.pinned = false;
-      sim.alpha(0.4).restart();
+      sim.alpha(0.5).restart();
     })
     .call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended));
-
-  currentNodeSel = node;
 
   node.append("title").text(d => `${d.title}\n${labelOf(d)}\n${d.id}`);
 
   // labels toggle
   const labelsOn = () => document.getElementById("toggleLabels")?.checked ?? true;
 
-  // “halo” pro čitelnost labelů
+  // halo pro čitelnost
   const labelGroup = g.append("g");
 
   const textHalo = labelGroup.selectAll("text.halo")
@@ -260,7 +363,7 @@ function draw(nodes, edges) {
     .enter()
     .append("text")
     .attr("class", "halo")
-    .text(d => (d.title ? String(d.title).slice(0, 40) : d.id))
+    .text(d => (d.title ? String(d.title).slice(0, 44) : d.id))
     .attr("font-size", 11)
     .attr("dx", 14)
     .attr("dy", 4)
@@ -275,15 +378,13 @@ function draw(nodes, edges) {
     .enter()
     .append("text")
     .attr("class", "label")
-    .text(d => (d.title ? String(d.title).slice(0, 40) : d.id))
+    .text(d => (d.title ? String(d.title).slice(0, 44) : d.id))
     .attr("font-size", 11)
     .attr("dx", 14)
     .attr("dy", 4)
     .attr("pointer-events", "none")
     .attr("fill", "#111")
     .attr("opacity", labelsOn() ? 0.95 : 0.0);
-
-  currentTexts = { text, textHalo };
 
   document.getElementById("toggleLabels").onchange = () => {
     const op = labelsOn() ? 0.95 : 0.0;
@@ -311,7 +412,6 @@ document.addEventListener("keydown", (e) => {
   if (e.key.toLowerCase() !== "p") return;
   if (!currentSim || !currentNodes.length) return;
 
-  // zjisti, jestli je většina už pin
   const pinnedCount = currentNodes.filter(n => n.fx != null && n.fy != null).length;
   const shouldUnpin = pinnedCount > currentNodes.length * 0.5;
 

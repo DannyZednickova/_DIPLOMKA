@@ -23,6 +23,51 @@ def index():
     # FileResponse je nejspolehlivější (žádné open/read, správné hlavičky)
     return FileResponse(str(INDEX_HTML))
 
+
+from fastapi import HTTPException
+
+
+
+#zobrazeni detajlu uzlu
+@app.get("/api/node")
+def node_details(id: str, neigh_limit: int = 50):
+    # Najdi uzel podle "našeho" id (opencti_id / cve / ip / oid / elementId)
+    cypher = """
+    MATCH (n)
+    WHERE n.opencti_id = $id OR n.cve = $id OR n.ip = $id OR n.oid = $id OR elementId(n) = $id
+    WITH n LIMIT 1
+
+    // sousedé + vztahy (omezeno)
+    OPTIONAL MATCH (n)-[r]-(m)
+    WITH n, r, m
+    ORDER BY type(r)
+    WITH n,
+         collect(DISTINCT {
+           rel: type(r),
+           dir: CASE WHEN startNode(r)=n THEN "OUT" ELSE "IN" END,
+           other_id: coalesce(m.opencti_id, m.cve, m.ip, m.oid, elementId(m)),
+           other_title: coalesce(m.name, m.cve, m.ip, m.oid, "unknown"),
+           other_labels: labels(m)
+         })[0..$neigh_limit] AS neighbors
+
+    RETURN
+      {
+        id: coalesce(n.opencti_id, n.cve, n.ip, n.oid, elementId(n)),
+        labels: labels(n),
+        title: coalesce(n.name, n.cve, n.ip, n.oid, "unknown"),
+        entity_type: n.entity_type,
+        props: properties(n),
+        neighbors: neighbors
+      } AS node;
+    """
+    out = run(cypher, id=id, neigh_limit=neigh_limit)
+    if not out:
+        raise HTTPException(status_code=404, detail="node not found")
+    return out[0].data()["node"]
+
+
+
+
 # 1) Fulltext search přes všechny indexy (sloučený výsledek)
 @app.get("/api/search")
 def search(q: str = Query(..., min_length=2), limit: int = 20):
