@@ -36,7 +36,7 @@ PAGE_SIZE = int(os.getenv("PAGE_SIZE", "200"))
 # CTI TRIGGER CONFIG
 # =========================
 CTI_ENABLE = os.getenv("CTI_ENABLE", "1") == "1"
-CTI_SCRIPT_PATH = os.getenv("CTI_SCRIPT_PATH", r"D:\_DIPLOMKA\CTI_Code\CTI_To_NEO.py")  # <-- UPRAV
+CTI_SCRIPT_PATH = os.getenv("CTI_SCRIPT_PATH", r"/middleware_to_neo/CTI_To_NEO.py")  # <-- UPRAV
 CTI_MAX_CVES = int(os.getenv("CTI_MAX_CVES", "200"))
 
 # předáš CTI skriptu (pokud to podporuje; když ne, nevadí)

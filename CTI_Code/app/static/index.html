@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CTI Graph</title>
+  <style>
+    body { margin:0; font-family: system-ui, sans-serif; }
+    header { padding:12px; display:flex; gap:8px; align-items:center; border-bottom:1px solid #3333; }
+    #q { width:420px; padding:8px; }
+    #results { max-height:180px; overflow:auto; border:1px solid #3333; margin: 0 12px 12px; }
+    .item { padding:8px; cursor:pointer; border-bottom:1px solid #3332; }
+    .item:hover { background:#0000000a; }
+    #graph { width: 100vw; height: calc(100vh - 260px); }
+    .hint { font-size: 12px; opacity: .75; padding: 0 12px 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>CTI Graph</strong>
+    <input id="q" placeholder="Fulltext: CVE-..., IP, malware name, attack pattern..." />
+    <button id="btn">Hledat</button>
+    <label>radius <input id="radius" type="number" value="2" min="1" max="4" style="width:48px"></label>
+  </header>
+
+  <div class="hint">
+    Klikni na výsledek → načte se subgraph kolem uzlu (Host/CVE/Malware/AttackPattern/IntrusionSet…).
+  </div>
+
+  <div id="results"></div>
+  <svg id="graph"></svg>
+
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="/static/graph.js"></script>
+</body>
+</html>

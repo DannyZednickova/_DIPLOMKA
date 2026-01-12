@@ -1,0 +1,18 @@
+// Fulltext přes "obsahové" uzly (OpenCTI StixEntity)
+CREATE FULLTEXT INDEX stix_fulltext IF NOT EXISTS
+FOR (n:StixEntity)
+ON EACH [n.name, n.entity_type, n.description, n.opencti_id];
+
+// Fulltext pro Vulnerability uzly (OpenVAS/CTI pivot)
+CREATE FULLTEXT INDEX vuln_fulltext IF NOT EXISTS
+FOR (n:Vulnerability)
+ON EACH [n.cve];
+
+// Fulltext pro Host a NVT
+CREATE FULLTEXT INDEX host_fulltext IF NOT EXISTS
+FOR (n:Host)
+ON EACH [n.ip];
+
+CREATE FULLTEXT INDEX nvt_fulltext IF NOT EXISTS
+FOR (n:NVT)
+ON EACH [n.oid, n.name];
