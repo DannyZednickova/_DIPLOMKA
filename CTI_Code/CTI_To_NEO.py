@@ -48,7 +48,7 @@ Používá se přímé bolt:// připojení bez routingu.
 NEO4J_URI = "bolt://127.0.0.1:7687"
 NEO4J_USER = "neo4j"
 NEO4J_PASS = "82008200aA"
-DB_NAME     = "test"
+DB_NAME     = "openvastest"
 
 
 # typy objektů, které chceme vypisovat a typicky ukládat do Neo4j
