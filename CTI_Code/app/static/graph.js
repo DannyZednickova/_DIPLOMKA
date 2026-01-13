@@ -407,6 +407,36 @@ function draw(nodes, edges) {
   });
 }
 
+
+//listing podle cve, malware atp
+async function loadList(kind) {
+  const map = {
+    hosts: "/api/list/hosts?limit=300",
+    cves: "/api/list/cves?limit=500",
+    malware: "/api/list/malware?limit=500",
+    intrusion: "/api/list/intrusion-sets?limit=500",
+    nvts: "/api/list/nvts?limit=500",
+  };
+
+  const data = await apiJson(map[kind]);
+  if (!data) return;
+  renderList(kind, data.results || []);
+}
+
+function renderList(kind, items) {
+  const el = document.getElementById("leftList");
+  el.innerHTML = "";
+  items.forEach(it => {
+    const div = document.createElement("div");
+    div.className = "item";
+    div.textContent = it.title;
+    div.onclick = () => loadGraph(it.id);
+    el.appendChild(div);
+  });
+}
+
+
+
 // pin/unpin all (klávesa P)
 document.addEventListener("keydown", (e) => {
   if (e.key.toLowerCase() !== "p") return;

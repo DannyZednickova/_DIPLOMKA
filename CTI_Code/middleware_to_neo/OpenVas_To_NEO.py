@@ -1,26 +1,26 @@
-import os
+
 import re
 import subprocess
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from shutil import which
 import sys
 from typing import Optional, Dict, Any, List, Set
-from pycti import OpenCTIApiClient
 from neo4j import GraphDatabase
-# ---- Neo4j config
-NEO4J_URI = "bolt://localhost:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASS = "82008200aA"
-NEO4J_DB = "openvastest"
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+# OpenCTI connection
+OPENCTI_URL = os.getenv("OPENCTI_URL")
+OPENCTI_TOKEN = os.getenv("OPENCTI_TOKEN")
+NEO4J_URI = os.getenv("NEO4J_URI")
+NEO4J_USER = os.getenv("NEO4J_USER")
+NEO4J_PASS = os.getenv("NEO4J_PASS")
+NEO4J_DB   = os.getenv("NEO4J_DB")
 
 # ---- input
-OPENVAS_XML_PATH = Path("D:\_DIPLOMKA\DATA\openvas.xml")
-
-# ---- OpenCTI config
-OPENCTI_URL = os.getenv("OPENCTI_URL", "http://localhost:8080/graphql")
-OPENCTI_TOKEN = os.getenv("OPENCTI_TOKEN", "CHANGE_ME_TOKEN")
+OPENVAS_XML_PATH = Path(os.getenv("OPENVAS_XML_PATH"))
 
 
 # ---- enrichment controls
@@ -36,7 +36,7 @@ PAGE_SIZE = int(os.getenv("PAGE_SIZE", "200"))
 # CTI TRIGGER CONFIG
 # =========================
 CTI_ENABLE = os.getenv("CTI_ENABLE", "1") == "1"
-CTI_SCRIPT_PATH = os.getenv("CTI_SCRIPT_PATH", r"/middleware_to_neo/CTI_To_NEO.py")  # <-- UPRAV
+CTI_SCRIPT_PATH = Path(os.getenv("CTI_SCRIPT_PATH"))
 CTI_MAX_CVES = int(os.getenv("CTI_MAX_CVES", "200"))
 
 # předáš CTI skriptu (pokud to podporuje; když ne, nevadí)
@@ -47,6 +47,17 @@ CTI_PAGE_SIZE = os.getenv("PAGE_SIZE", "200")
 ENRICH_ONLY_CVSS_GE = float(os.getenv("ENRICH_ONLY_CVSS_GE", "0"))
 
 CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
+
+##========================
+#Check config
+#========================
+if not OPENVAS_XML_PATH.is_file():
+    sys.exit(f"Missing OPENVAS_XML_PATH: {OPENVAS_XML_PATH}")
+
+if not CTI_SCRIPT_PATH.is_file():
+    sys.exit(f"Missing CTI_SCRIPT_PATH: {CTI_SCRIPT_PATH}")
+
+
 # =========================
 # XML HELPERS
 # =========================
