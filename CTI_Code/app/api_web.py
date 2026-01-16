@@ -8,6 +8,8 @@ from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from neo4j import GraphDatabase
+from collections import deque, defaultdict
+
 
 load_dotenv()
 
@@ -26,12 +28,172 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
 
 
+
+REL_WHITELIST = [
+    "USES","TARGETS","IS","REFERS_TO","VULNERABLE_TO",
+    "HAS_NVT","AFFECTS","DETECTED_BY","RELATED_TO",
+    "INDICATES","EXPLOITS","ATTRIBUTED_TO"
+]
+
+CYPHER_BY_RADIUS = {
+    1: """
+    MATCH (start)
+    WHERE start.opencti_id = $node_id OR start.cve = $node_id OR start.ip = $node_id OR start.oid = $node_id OR elementId(start) = $node_id
+    WITH start LIMIT 1
+    MATCH p=(start)-[*0..1]-(n)
+    WITH collect(p) AS ps
+    UNWIND ps AS p2
+    UNWIND nodes(p2) AS nn
+    WITH collect(DISTINCT nn)[0..$max_nodes] AS ns, ps
+    UNWIND ps AS p3
+    UNWIND relationships(p3) AS rr
+    WITH ns, collect(DISTINCT rr) AS rs
+    RETURN
+      [n IN ns | {id: coalesce(n.opencti_id, n.cve, n.ip, n.oid, elementId(n)), labels: labels(n), title: coalesce(n.name, n.cve, n.ip, n.oid, 'unknown'), entity_type: n.entity_type}] AS nodes,
+      [r IN rs | {source: coalesce(startNode(r).opencti_id, startNode(r).cve, startNode(r).ip, startNode(r).oid, elementId(startNode(r))),
+                  target: coalesce(endNode(r).opencti_id, endNode(r).cve, endNode(r).ip, endNode(r).oid, elementId(endNode(r))),
+                  type: type(r)}] AS edges;
+    """,
+    2: """
+    MATCH (start)
+    WHERE start.opencti_id = $node_id OR start.cve = $node_id OR start.ip = $node_id OR start.oid = $node_id OR elementId(start) = $node_id
+    WITH start LIMIT 1
+
+    MATCH p=(start)-[r*0..2]-(x)
+    WHERE ALL(rel IN r WHERE type(rel) IN ["USES","TARGETS","IS","REFERS_TO","VULNERABLE_TO","HAS_NVT"])
+    WITH start, collect(p) AS ps
+
+    // vypočti pro každý uzel minimální vzdálenost (dist) ze všech cest
+    UNWIND ps AS p2
+    UNWIND nodes(p2) AS n
+    WITH start, ps, n, min(length(p2)) AS dist,
+         CASE
+           WHEN 'Host' IN labels(n) THEN 0
+           WHEN 'Vulnerability' IN labels(n) THEN 1
+           WHEN 'AttackPattern' IN labels(n) THEN 2
+           WHEN 'Malware' IN labels(n) THEN 3
+           WHEN 'IntrusionSet' IN labels(n) THEN 4
+           WHEN 'NVT' IN labels(n) THEN 5
+           ELSE 9
+         END AS prio
+    ORDER BY dist ASC, prio ASC
+
+    WITH start, ps, collect(DISTINCT n)[0..$max_nodes] AS ns
+
+    // hrany jen mezi vybranými uzly
+    UNWIND ps AS p3
+    UNWIND relationships(p3) AS rr
+    WITH ns, collect(DISTINCT rr) AS rs
+
+    RETURN
+      [n IN ns | {
+        id: coalesce(n.opencti_id, n.cve, n.ip, n.oid, elementId(n)),
+        labels: labels(n),
+        title: coalesce(n.name, n.cve, n.ip, n.oid, 'unknown'),
+        entity_type: n.entity_type
+      }] AS nodes,
+      [r IN rs WHERE startNode(r) IN ns AND endNode(r) IN ns | {
+        source: coalesce(startNode(r).opencti_id, startNode(r).cve, startNode(r).ip, startNode(r).oid, elementId(startNode(r))),
+        target: coalesce(endNode(r).opencti_id, endNode(r).cve, endNode(r).ip, endNode(r).oid, elementId(endNode(r))),
+        type: type(r)
+      }] AS edges;
+    """,
+
+    3: """
+    MATCH (start)
+    WHERE start.opencti_id = $node_id OR start.cve = $node_id OR start.ip = $node_id OR start.oid = $node_id OR elementId(start) = $node_id
+    WITH start LIMIT 1
+    MATCH p=(start)-[*0..3]-(n)
+    WITH collect(p) AS ps
+    UNWIND ps AS p2
+    UNWIND nodes(p2) AS nn
+    WITH collect(DISTINCT nn)[0..$max_nodes] AS ns, ps
+    UNWIND ps AS p3
+    UNWIND relationships(p3) AS rr
+    WITH ns, collect(DISTINCT rr) AS rs
+    RETURN
+      [n IN ns | {id: coalesce(n.opencti_id, n.cve, n.ip, n.oid, elementId(n)), labels: labels(n), title: coalesce(n.name, n.cve, n.ip, n.oid, 'unknown'), entity_type: n.entity_type}] AS nodes,
+      [r IN rs | {source: coalesce(startNode(r).opencti_id, startNode(r).cve, startNode(r).ip, startNode(r).oid, elementId(startNode(r))),
+                  target: coalesce(endNode(r).opencti_id, endNode(r).cve, endNode(r).ip, endNode(r).oid, elementId(endNode(r))),
+                  type: type(r)}] AS edges;
+    """,
+    4: """
+    MATCH (start)
+    WHERE start.opencti_id = $node_id OR start.cve = $node_id OR start.ip = $node_id OR start.oid = $node_id OR elementId(start) = $node_id
+    WITH start LIMIT 1
+    MATCH p=(start)-[*0..4]-(n)
+    WITH collect(p) AS ps
+    UNWIND ps AS p2
+    UNWIND nodes(p2) AS nn
+    WITH collect(DISTINCT nn)[0..$max_nodes] AS ns, ps
+    UNWIND ps AS p3
+    UNWIND relationships(p3) AS rr
+    WITH ns, collect(DISTINCT rr) AS rs
+    RETURN
+      [n IN ns | {id: coalesce(n.opencti_id, n.cve, n.ip, n.oid, elementId(n)), labels: labels(n), title: coalesce(n.name, n.cve, n.ip, n.oid, 'unknown'), entity_type: n.entity_type}] AS nodes,
+      [r IN rs | {source: coalesce(startNode(r).opencti_id, startNode(r).cve, startNode(r).ip, startNode(r).oid, elementId(startNode(r))),
+                  target: coalesce(endNode(r).opencti_id, endNode(r).cve, endNode(r).ip, endNode(r).oid, elementId(endNode(r))),
+                  type: type(r)}] AS edges;
+    """,
+}
+
+
 @app.on_event("shutdown")
 def _shutdown():
     try:
         driver.close()
     except Exception:
         pass
+
+
+
+
+def build_highlight_path(nodes, edges, start_id, max_hops=6):
+    node_labels = {n["id"]: set(n.get("labels") or []) for n in nodes}
+    hosts = {nid for nid, lbs in node_labels.items() if "Host" in lbs}
+    if not hosts:
+        return {"node_ids": [], "edge_keys": []}
+
+    adj = defaultdict(list)
+    for e in edges:
+        s, t, typ = e["source"], e["target"], e["type"]
+        adj[s].append((t, typ))
+        adj[t].append((s, typ))  # nedirekční pro hledání
+
+    q = deque([(start_id, 0)])
+    prev = {start_id: None}  # node -> (prev_node, edge_type)
+    found_host = None
+
+    while q:
+        cur, d = q.popleft()
+        if cur in hosts and cur != start_id:
+            found_host = cur
+            break
+        if d >= max_hops:
+            continue
+        for nxt, typ in adj.get(cur, []):
+            if nxt not in prev:
+                prev[nxt] = (cur, typ)
+                q.append((nxt, d + 1))
+
+    if not found_host:
+        return {"node_ids": [], "edge_keys": []}
+
+    # reconstruct path
+    node_ids = []
+    edge_keys = []
+    x = found_host
+    node_ids.append(x)
+    while prev[x] is not None:
+        p, typ = prev[x]
+        node_ids.append(p)
+        edge_keys.append(f"{p}|{typ}|{x}")
+        x = p
+
+    node_ids = list(reversed(node_ids))
+    edge_keys = list(reversed(edge_keys))
+    return {"node_ids": node_ids, "edge_keys": edge_keys}
+
 
 
 def run(query: str, **params):
@@ -110,94 +272,83 @@ def search(q: str = Query(..., min_length=2), limit: int = 20):
     rows = run(cypher, q=q, limit=limit)
     return {"results": [r.data() for r in rows]}
 
-
 @app.get("/api/graph")
-def graph(node_id: str, radius: int = 2, max_nodes: int = 400):
+def graph(
+    node_id: str,
+    radius: int = 2,
+    max_nodes: int = 400,
+    highlight_hosts: bool = True,
+    path_max_hops: int = 6,
+    max_hosts: int = 30,
+):
     if radius not in (1, 2, 3, 4):
         raise HTTPException(status_code=400, detail="radius must be 1..4")
 
-    cypher_by_radius = {
-        1: """
-        MATCH (start)
-        WHERE start.opencti_id = $node_id OR start.cve = $node_id OR start.ip = $node_id OR start.oid = $node_id OR elementId(start) = $node_id
-        WITH start LIMIT 1
-        MATCH p=(start)-[*0..1]-(n)
-        WITH collect(p) AS ps
-        UNWIND ps AS p2
-        UNWIND nodes(p2) AS nn
-        WITH collect(DISTINCT nn)[0..$max_nodes] AS ns, ps
-        UNWIND ps AS p3
-        UNWIND relationships(p3) AS rr
-        WITH ns, collect(DISTINCT rr) AS rs
-        RETURN
-          [n IN ns | {id: coalesce(n.opencti_id, n.cve, n.ip, n.oid, elementId(n)), labels: labels(n), title: coalesce(n.name, n.cve, n.ip, n.oid, 'unknown'), entity_type: n.entity_type}] AS nodes,
-          [r IN rs | {source: coalesce(startNode(r).opencti_id, startNode(r).cve, startNode(r).ip, startNode(r).oid, elementId(startNode(r))),
-                      target: coalesce(endNode(r).opencti_id, endNode(r).cve, endNode(r).ip, endNode(r).oid, elementId(endNode(r))),
-                      type: type(r)}] AS edges;
-        """,
-        2: """
-        MATCH (start)
-        WHERE start.opencti_id = $node_id OR start.cve = $node_id OR start.ip = $node_id OR start.oid = $node_id OR elementId(start) = $node_id
-        WITH start LIMIT 1
-        MATCH p=(start)-[r*0..2]-(n)
-        WHERE ALL(x IN r WHERE type(x) IN ["USES","TARGETS","IS","REFERS_TO","VULNERABLE_TO"])
-        WITH collect(p) AS ps
-        UNWIND ps AS p2
-        UNWIND nodes(p2) AS nn
-        WITH collect(DISTINCT nn)[0..$max_nodes] AS ns, ps
-        UNWIND ps AS p3
-        UNWIND relationships(p3) AS rr
-        WITH ns, collect(DISTINCT rr) AS rs
-        RETURN
-          [n IN ns | {id: coalesce(n.opencti_id, n.cve, n.ip, n.oid, elementId(n)), labels: labels(n), title: coalesce(n.name, n.cve, n.ip, n.oid, 'unknown'), entity_type: n.entity_type}] AS nodes,
-          [r IN rs | {source: coalesce(startNode(r).opencti_id, startNode(r).cve, startNode(r).ip, startNode(r).oid, elementId(startNode(r))),
-                      target: coalesce(endNode(r).opencti_id, endNode(r).cve, endNode(r).ip, endNode(r).oid, elementId(endNode(r))),
-                      type: type(r)}] AS edges;
-        """,
-        3: """
-        MATCH (start)
-        WHERE start.opencti_id = $node_id OR start.cve = $node_id OR start.ip = $node_id OR start.oid = $node_id OR elementId(start) = $node_id
-        WITH start LIMIT 1
-        MATCH p=(start)-[*0..3]-(n)
-        WITH collect(p) AS ps
-        UNWIND ps AS p2
-        UNWIND nodes(p2) AS nn
-        WITH collect(DISTINCT nn)[0..$max_nodes] AS ns, ps
-        UNWIND ps AS p3
-        UNWIND relationships(p3) AS rr
-        WITH ns, collect(DISTINCT rr) AS rs
-        RETURN
-          [n IN ns | {id: coalesce(n.opencti_id, n.cve, n.ip, n.oid, elementId(n)), labels: labels(n), title: coalesce(n.name, n.cve, n.ip, n.oid, 'unknown'), entity_type: n.entity_type}] AS nodes,
-          [r IN rs | {source: coalesce(startNode(r).opencti_id, startNode(r).cve, startNode(r).ip, startNode(r).oid, elementId(startNode(r))),
-                      target: coalesce(endNode(r).opencti_id, endNode(r).cve, endNode(r).ip, endNode(r).oid, elementId(endNode(r))),
-                      type: type(r)}] AS edges;
-        """,
-        4: """
-        MATCH (start)
-        WHERE start.opencti_id = $node_id OR start.cve = $node_id OR start.ip = $node_id OR start.oid = $node_id OR elementId(start) = $node_id
-        WITH start LIMIT 1
-        MATCH p=(start)-[*0..4]-(n)
-        WITH collect(p) AS ps
-        UNWIND ps AS p2
-        UNWIND nodes(p2) AS nn
-        WITH collect(DISTINCT nn)[0..$max_nodes] AS ns, ps
-        UNWIND ps AS p3
-        UNWIND relationships(p3) AS rr
-        WITH ns, collect(DISTINCT rr) AS rs
-        RETURN
-          [n IN ns | {id: coalesce(n.opencti_id, n.cve, n.ip, n.oid, elementId(n)), labels: labels(n), title: coalesce(n.name, n.cve, n.ip, n.oid, 'unknown'), entity_type: n.entity_type}] AS nodes,
-          [r IN rs | {source: coalesce(startNode(r).opencti_id, startNode(r).cve, startNode(r).ip, startNode(r).oid, elementId(startNode(r))),
-                      target: coalesce(endNode(r).opencti_id, endNode(r).cve, endNode(r).ip, endNode(r).oid, elementId(endNode(r))),
-                      type: type(r)}] AS edges;
-        """,
-    }
-
-    out = run(cypher_by_radius[radius], node_id=node_id, max_nodes=max_nodes)
+    # 1) tvůj radius subgraph
+    out = run(CYPHER_BY_RADIUS[radius], node_id=node_id, max_nodes=max_nodes)
     if not out:
-        return {"nodes": [], "edges": []}
+        return {"nodes": [], "edges": [], "highlight": {"node_ids": [], "edge_keys": []}}
 
     data = out[0].data()
-    return {"nodes": data["nodes"], "edges": data["edges"]}
+    nodes = data["nodes"]
+    edges = data["edges"]
+
+    highlight = {"node_ids": [], "edge_keys": []}
+    if highlight_hosts:
+        highlight = build_highlight_path(nodes, edges, node_id, max_hops=path_max_hops)
+    return {"nodes": nodes, "edges": edges, "highlight": highlight}
+
+
+    #toto pujde smazat...
+    HOPS = int(path_max_hops)
+    if HOPS < 1 or HOPS > 12:
+        raise HTTPException(status_code=400, detail="path_max_hops must be 1..12")
+
+
+    # 2) shortest-ish cesty START -> Host přes whitelist relací
+    highlight_cypher = f"""
+    MATCH (start)
+    WHERE start.opencti_id = $node_id OR start.cve = $node_id OR start.ip = $node_id OR start.oid = $node_id OR elementId(start) = $node_id
+    WITH start LIMIT 1
+
+    // kandidátní hosti do {HOPS} hopů (radši nedirekční, ať to najde cestu i když hrany nemáš všude stejným směrem)
+    MATCH p=(start)-[rs*1..{HOPS}]-(h:Host)
+    WHERE ALL(r IN rs WHERE type(r) IN $rel_whitelist)
+    WITH h, min(length(p)) AS minLen, start
+    ORDER BY minLen ASC
+    LIMIT $max_hosts
+
+    // všechny shortest cesty s tou minimální délkou
+    MATCH p2=(start)-[rs2*1..{HOPS}]-(h)
+    WHERE ALL(r IN rs2 WHERE type(r) IN $rel_whitelist)
+      AND length(p2) = minLen
+
+    WITH collect(p2) AS ps
+    UNWIND ps AS p
+    UNWIND nodes(p) AS n
+    WITH collect(DISTINCT coalesce(n.opencti_id, n.cve, n.ip, n.oid, elementId(n))) AS node_ids, ps
+    UNWIND ps AS p3
+    UNWIND relationships(p3) AS r
+    WITH node_ids,
+         collect(DISTINCT (
+           coalesce(startNode(r).opencti_id, startNode(r).cve, startNode(r).ip, startNode(r).oid, elementId(startNode(r)))
+           + "|" + type(r) + "|" +
+           coalesce(endNode(r).opencti_id, endNode(r).cve, endNode(r).ip, endNode(r).oid, elementId(endNode(r)))
+         )) AS edge_keys
+    RETURN {{ node_ids: node_ids, edge_keys: edge_keys }} AS highlight;
+    """
+
+    h = run(
+        highlight_cypher,
+        node_id=node_id,
+        path_max_hops=path_max_hops,
+        max_hosts=max_hosts,
+        rel_whitelist=REL_WHITELIST,
+    )
+    if h:
+        highlight = h[0].data().get("highlight") or highlight
+
+    return {"nodes": nodes, "edges": edges, "highlight": highlight}
 
 
 # LISTS – MUSÍ BÝT MIMO /api/graph (jinak 500/duplicitní route)

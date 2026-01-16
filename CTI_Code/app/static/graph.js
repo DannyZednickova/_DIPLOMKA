@@ -4,9 +4,13 @@ const svg = d3.select("#graph");
 let width = svg.node().clientWidth;
 let height = svg.node().clientHeight;
 
+// cache posledního grafu kvůli toggle bez reloadu
+let lastGraph = { nodes: [], edges: [], highlight: { node_ids: [], edge_keys: [] } };
+
 window.addEventListener("resize", () => {
   width = svg.node().clientWidth;
   height = svg.node().clientHeight;
+  if (lastGraph.nodes.length) draw(lastGraph.nodes, lastGraph.edges, lastGraph.highlight);
 });
 
 // ---------- helpers: styling ----------
@@ -49,6 +53,30 @@ function edgeColor(type) {
   }
 }
 
+function hexToRgba(hex, a) {
+  const h = (hex || "").replace("#", "");
+  if (h.length !== 6) return `rgba(0,0,0,${a})`;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+// --- edge key helpers for highlight ---
+function edgeKeyFromParts(s, type, t) {
+  return `${s}|${type}|${t}`;
+}
+function edgeKey(e) {
+  const s = (e.source && e.source.id) ? e.source.id : e.source;
+  const t = (e.target && e.target.id) ? e.target.id : e.target;
+  return edgeKeyFromParts(s, e.type, t);
+}
+function edgeKeyReverse(e) {
+  const s = (e.source && e.source.id) ? e.source.id : e.source;
+  const t = (e.target && e.target.id) ? e.target.id : e.target;
+  return edgeKeyFromParts(t, e.type, s);
+}
+
 // ---------- UI helpers ----------
 function ensureLabelToggle() {
   if (document.getElementById("toggleLabels")) return;
@@ -62,6 +90,42 @@ function ensureLabelToggle() {
   wrap.style.opacity = "0.85";
   wrap.innerHTML = `<input id="toggleLabels" type="checkbox" checked style="vertical-align: middle; margin-right: 6px;">labels`;
   header.appendChild(wrap);
+}
+
+function ensurePathOnlyToggle() {
+  if (document.getElementById("togglePathOnly")) return;
+
+  const header = document.querySelector("header");
+  if (!header) return;
+
+  const wrap = document.createElement("label");
+  wrap.style.marginLeft = "10px";
+  wrap.style.fontSize = "12px";
+  wrap.style.opacity = "0.85";
+  wrap.innerHTML = `<input id="togglePathOnly" type="checkbox" style="vertical-align: middle; margin-right: 6px;">schovat nepřímé uzly`;
+  header.appendChild(wrap);
+
+  wrap.querySelector("input").addEventListener("change", () => {
+    if (lastGraph.nodes.length) draw(lastGraph.nodes, lastGraph.edges, lastGraph.highlight);
+  });
+}
+
+function ensureDimToggle() {
+  if (document.getElementById("toggleDimIndirect")) return;
+
+  const header = document.querySelector("header");
+  if (!header) return;
+
+  const wrap = document.createElement("label");
+  wrap.style.marginLeft = "10px";
+  wrap.style.fontSize = "12px";
+  wrap.style.opacity = "0.85";
+  wrap.innerHTML = `<input id="toggleDimIndirect" type="checkbox" style="vertical-align: middle; margin-right: 6px;">utlumit nepřímé uzly`;
+  header.appendChild(wrap);
+
+  wrap.querySelector("input").addEventListener("change", () => {
+    if (lastGraph.nodes.length) draw(lastGraph.nodes, lastGraph.edges, lastGraph.highlight);
+  });
 }
 
 function ensureLegend() {
@@ -78,7 +142,8 @@ function ensureLegend() {
   legend.style.padding = "10px 12px";
   legend.style.fontSize = "12px";
   legend.style.boxShadow = "0 2px 10px rgba(0,0,0,0.1)";
-  legend.style.maxWidth = "340px";
+  legend.style.maxWidth = "360px";
+  legend.style.zIndex = "9998";
 
   const rows = [
     ["USES", edgeColor("USES")],
@@ -90,7 +155,7 @@ function ensureLegend() {
   ];
 
   legend.innerHTML = `
-    <div style="font-weight:600; margin-bottom:8px;">Edges</div>
+    <div style="font-weight:700; margin-bottom:8px;">Legend</div>
     ${rows.map(([t, c]) => `
       <div style="display:flex; align-items:center; gap:8px; margin:4px 0;">
         <span style="display:inline-block; width:18px; height:3px; background:${c};"></span>
@@ -102,54 +167,16 @@ function ensureLegend() {
       <div><b>Dvojklik</b>: unpin (vrátí se do simulace)</div>
       <div><b>P</b>: pin/unpin ALL</div>
       <div><b>Klik</b>: detail panel (Neo4j)</div>
-      <div><b>SHIFT+klik</b>: drill-down (načte subgraph)</div>
+      <div><b>SHIFT+klik</b>: drill-down (subgraph)</div>
+      <div style="margin-top:6px;"><b>schovat nepřímé uzly</b>: ukáže jen cestu k Hostovi</div>
+      <div><b>utlumit nepřímé uzly</b>: ponechá vše, ale mimo cestu zeslabí (vč. šipek)</div>
     </div>
   `;
   document.body.appendChild(legend);
 }
 
-// ---------- Context panel (sidebar) ----------
-function ensureCtxPanel() {
-  if (document.getElementById("ctx")) return;
-
-  const panel = document.createElement("div");
-  panel.id = "ctx";
-  panel.style.position = "fixed";
-  panel.style.top = "70px";
-  panel.style.right = "12px";
-  panel.style.width = "380px";
-  panel.style.maxHeight = "calc(100vh - 90px)";
-  panel.style.overflow = "auto";
-  panel.style.background = "rgba(255,255,255,0.97)";
-  panel.style.border = "1px solid rgba(0,0,0,0.15)";
-  panel.style.borderRadius = "14px";
-  panel.style.padding = "12px 12px 10px";
-  panel.style.boxShadow = "0 10px 30px rgba(0,0,0,0.15)";
-  panel.style.display = "none";
-  panel.style.zIndex = "9999";
-
-  panel.innerHTML = `
-    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-      <div id="ctxTitle" style="font-weight:700; font-size:14px;">Node</div>
-      <button id="ctxClose" style="border:1px solid #0002; background:#fff; border-radius:10px; padding:4px 10px; cursor:pointer;">×</button>
-    </div>
-    <div id="ctxMeta" style="margin-top:6px; font-size:12px; opacity:.75;"></div>
-    <hr style="border:none; border-top:1px solid #0001; margin:10px 0;">
-    <div style="font-weight:600; font-size:13px; margin-bottom:6px;">Properties</div>
-    <pre id="ctxProps" style="white-space:pre-wrap; font-size:12px; background:#f6f6f6; padding:10px; border-radius:12px; margin:0;"></pre>
-    <div style="font-weight:600; font-size:13px; margin:10px 0 6px;">Neighbors</div>
-    <div id="ctxNeigh" style="font-size:12px;"></div>
-  `;
-
-  document.body.appendChild(panel);
-
-  document.getElementById("ctxClose").onclick = () => {
-    panel.style.display = "none";
-  };
-}
-
+// ---------- Context panel ----------
 function showCtxPanel(node) {
-  ensureCtxPanel();
   const panel = document.getElementById("ctx");
   panel.style.display = "block";
 
@@ -201,18 +228,23 @@ function renderCtxDetails(d) {
   }
 }
 
+document.getElementById("ctxClose").onclick = () => {
+  document.getElementById("ctx").style.display = "none";
+};
+
 // ---------- API ----------
 async function apiJson(url) {
   const res = await fetch(url);
   if (!res.ok) {
     const txt = await res.text();
     console.error("API error:", res.status, txt);
-    alert(`API error ${res.status}:\n${txt.slice(0, 300)}`);
+    alert(`API error ${res.status}:\n${txt.slice(0, 400)}`);
     return null;
   }
   return await res.json();
 }
 
+// ---------- Search (fulltext) ----------
 async function doSearch() {
   const q = document.getElementById("q").value.trim();
   if (q.length < 2) return;
@@ -224,7 +256,6 @@ async function doSearch() {
 function renderResults(results) {
   const el = document.getElementById("results");
   el.innerHTML = "";
-
   results.forEach(r => {
     const div = document.createElement("div");
     div.className = "item";
@@ -234,16 +265,80 @@ function renderResults(results) {
   });
 }
 
+// ---------- Lists (Evidence vs CTI) ----------
+const LIST_ENDPOINTS = {
+  hosts: "/api/list/hosts?limit=500",
+  cves: "/api/list/cves?limit=800",
+  nvts: "/api/list/nvts?limit=800",
+  malware: "/api/list/malware?limit=800",
+  intrusion: "/api/list/intrusion-sets?limit=800",
+};
+
+const cache = { hosts: [], cves: [], nvts: [], malware: [], intrusion: [] };
+
+function renderList(kind, items) {
+  const el = document.getElementById(`list_${kind}`);
+  if (!el) {
+    console.error("renderList: missing element", `list_${kind}`);
+    return;
+  }
+
+  el.innerHTML = "";
+  items.forEach(it => {
+    const div = document.createElement("div");
+    div.className = "item";
+    div.textContent = it.title;
+    div.onclick = () => loadGraph(it.id);
+    el.appendChild(div);
+  });
+}
+
+function wireFilter(kind) {
+  const input = document.getElementById(`filter_${kind}`);
+  if (!input) return;
+
+  input.addEventListener("input", () => {
+    const q = input.value.trim().toLowerCase();
+    const src = cache[kind] || [];
+    if (!q) return renderList(kind, src);
+
+    const filtered = src.filter(x => (x.title || "").toLowerCase().includes(q));
+    renderList(kind, filtered);
+  });
+}
+
+async function loadList(kind) {
+  const url = LIST_ENDPOINTS[kind];
+  const data = await apiJson(url);
+  if (!data) return;
+
+  cache[kind] = data.results || [];
+  renderList(kind, cache[kind]);
+  wireFilter(kind);
+}
+
+// ---------- Graph load ----------
 async function loadGraph(node_id) {
   const radius = parseInt(document.getElementById("radius").value || "2", 10);
-  const data = await apiJson(`/api/graph?node_id=${encodeURIComponent(node_id)}&radius=${radius}&max_nodes=400`);
+
+  const data = await apiJson(
+    `/api/graph?node_id=${encodeURIComponent(node_id)}&radius=${radius}&max_nodes=400`
+    + `&highlight_hosts=1&path_max_hops=6`
+  );
   if (!data) return;
-  draw(data.nodes || [], data.edges || []);
+
+  lastGraph = {
+    nodes: data.nodes || [],
+    edges: data.edges || [],
+    highlight: data.highlight || { node_ids: [], edge_keys: [] }
+  };
+
+  draw(lastGraph.nodes, lastGraph.edges, lastGraph.highlight);
 }
 
 async function loadNodeDetails(node) {
   showCtxPanel(node);
-  const details = await apiJson(`/api/node?id=${encodeURIComponent(node.id)}&neigh_limit=120`);
+  const details = await apiJson(`/api/node?id=${encodeURIComponent(node.id)}&neigh_limit=140`);
   if (details) renderCtxDetails(details);
 }
 
@@ -251,66 +346,166 @@ async function loadNodeDetails(node) {
 let currentSim = null;
 let currentNodes = [];
 
-function draw(nodes, edges) {
+function draw(nodes, edges, highlight) {
   ensureLabelToggle();
+  ensurePathOnlyToggle();
+  ensureDimToggle();
   ensureLegend();
-  ensureCtxPanel();
+
+  highlight = highlight || { node_ids: [], edge_keys: [] };
+  const hiNodes = new Set(highlight.node_ids || []);
+  const hiEdges = new Set(highlight.edge_keys || []);
+
+  const pathOnly = document.getElementById("togglePathOnly")?.checked ?? false;
+  const dimIndirect = document.getElementById("toggleDimIndirect")?.checked ?? false;
+
+  // když je zapnuté "schovat", tak "utlumit" nedává smysl → disable
+  const dimBox = document.getElementById("toggleDimIndirect");
+  if (dimBox) {
+    dimBox.disabled = pathOnly;
+    dimBox.parentElement.style.opacity = pathOnly ? "0.45" : "0.85";
+  }
+
+  // helpery pro vyhodnocení "main" (hlavní) uzlů/hran
+  const isHiNode = (n) => hiNodes.has(n.id);
+  const isHiEdge = (e) => hiEdges.has(edgeKey(e)) || hiEdges.has(edgeKeyReverse(e));
+
+  function edgeEnds(e) {
+    const s = (e.source && e.source.id) ? e.source.id : e.source;
+    const t = (e.target && e.target.id) ? e.target.id : e.target;
+    return [s, t];
+  }
+
+  const isMainNodeId = (id) => hiNodes.has(id);
+
+  // hrana je "main", když je explicitně v highlight, nebo spojuje 2 highlight uzly
+  const isMainEdge = (e) => {
+    if (isHiEdge(e)) return true;
+    const [s, t] = edgeEnds(e);
+    return isMainNodeId(s) && isMainNodeId(t);
+  };
+
+  // pokud chceš jen cestu a highlight existuje -> odfiltruj všechno mimo
+  if (pathOnly && hiNodes.size > 0) {
+    const filteredNodes = (nodes || []).filter(n => hiNodes.has(n.id));
+    const filteredEdges = (edges || []).filter(e => {
+      const k1 = edgeKeyFromParts(e.source, e.type, e.target);
+      const k2 = edgeKeyFromParts(e.target, e.type, e.source);
+      return hiEdges.has(k1) || hiEdges.has(k2);
+    });
+    nodes = filteredNodes;
+    edges = filteredEdges;
+  }
 
   currentNodes = nodes;
 
+  // vyčistit SVG
   svg.selectAll("*").remove();
 
   const g = svg.append("g");
   svg.call(d3.zoom().on("zoom", (event) => g.attr("transform", event.transform)));
 
-  // defs: šipky pro edge typy
+  // defs: arrows
   const edgeTypes = Array.from(new Set((edges || []).map(e => e.type))).sort();
   const defs = svg.append("defs");
 
-  defs.selectAll("marker")
-    .data(edgeTypes)
-    .enter()
-    .append("marker")
-    .attr("id", d => `arrow-${d}`)
-    .attr("viewBox", "0 -5 10 10")
-    .attr("refX", 18)
-    .attr("refY", 0)
-    .attr("markerWidth", 6)
-    .attr("markerHeight", 6)
-    .attr("orient", "auto")
-    .append("path")
-    .attr("d", "M0,-5L10,0L0,5")
-    .attr("fill", d => edgeColor(d));
+  // per-type marker: normal / HI / DIM (vždy drží barvy vztahů!)
+  edgeTypes.forEach((t) => {
+    // normal
+    defs.append("marker")
+      .attr("id", `arrow-${t}`)
+      .attr("viewBox", "0 -5 10 10")
+      .attr("refX", 18)
+      .attr("refY", 0)
+      .attr("markerWidth", 6)
+      .attr("markerHeight", 6)
+      .attr("orient", "auto")
+      .append("path")
+      .attr("d", "M0,-5L10,0L0,5")
+      .attr("fill", edgeColor(t));
+
+    // HI (větší šipka, pořád barva vztahu)
+    defs.append("marker")
+      .attr("id", `arrow-${t}-HI`)
+      .attr("viewBox", "0 -5 10 10")
+      .attr("refX", 18)
+      .attr("refY", 0)
+      .attr("markerWidth", 9)
+      .attr("markerHeight", 9)
+      .attr("orient", "auto")
+      .append("path")
+      .attr("d", "M0,-5L10,0L0,5")
+      .attr("fill", edgeColor(t));
+
+    // DIM (vybledlá šipka stejné barvy vztahu)
+    defs.append("marker")
+      .attr("id", `arrow-${t}-DIM`)
+      .attr("viewBox", "0 -5 10 10")
+      .attr("refX", 18)
+      .attr("refY", 0)
+      .attr("markerWidth", 6)
+      .attr("markerHeight", 6)
+      .attr("orient", "auto")
+      .append("path")
+      .attr("d", "M0,-5L10,0L0,5")
+      .attr("fill", hexToRgba(edgeColor(t), 0.25));
+  });
 
   const nodeById = new Map(nodes.map(n => [n.id, n]));
   const links = (edges || [])
     .filter(e => nodeById.has(e.source) && nodeById.has(e.target))
     .map(e => ({ ...e }));
 
-  // Force simulation: víc místa pro labely, méně chumlu
+  // Simulation tuned for readability
   const sim = d3.forceSimulation(nodes)
-    .force("link", d3.forceLink(links).id(d => d.id).distance(105))
-    .force("charge", d3.forceManyBody().strength(-170))
+    .alphaMin(0.06)
+    .alphaDecay(0.12)
+    .velocityDecay(0.55)
+    .force("link", d3.forceLink(links).id(d => d.id).distance(85).strength(0.95))
+    .force("charge", d3.forceManyBody().strength(-110))
     .force("center", d3.forceCenter(width / 2, height / 2))
-    .force("collide", d3.forceCollide().radius(d => radiusFor(d) + 14))
-    .force("x", d3.forceX(width / 2).strength(0.03))
-    .force("y", d3.forceY(height / 2).strength(0.03));
+    .force("collide", d3.forceCollide().radius(d => radiusFor(d) + 14).iterations(2))
+    .force("x", d3.forceX(width / 2).strength(0.10))
+    .force("y", d3.forceY(height / 2).strength(0.10));
 
   currentSim = sim;
 
-  // edges
+  // hard stop, aby se to po chvíli přestalo hýbat
+  setTimeout(() => {
+    if (!currentSim) return;
+    currentSim.alphaTarget(0);
+    currentSim.stop();
+  }, 1600);
+
+  // ----- EDGES: barvy vztahů vždy zachované, highlight jen tloušťkou/opacitou/velikostí šipky -----
   const link = g.selectAll("line")
     .data(links)
     .enter()
     .append("line")
-    .attr("stroke", d => edgeColor(d.type))
-    .attr("stroke-width", 1.8)
-    .attr("opacity", 0.85)
-    .attr("marker-end", d => `url(#arrow-${d.type})`);
+    .attr("stroke", d => {
+      const c = edgeColor(d.type);
+      if (dimIndirect && !isMainEdge(d)) return hexToRgba(c, 0.18); // tlumené, ale pořád "barva vztahu"
+      return c;                                                    // normál + main
+    })
+    .attr("stroke-width", d => {
+      if (isMainEdge(d)) return 4.5;
+      if (dimIndirect) return 1.0;
+      return 1.8;
+    })
+    .attr("opacity", d => {
+      if (isMainEdge(d)) return 0.95;
+      if (dimIndirect) return 0.22;   // tlumené, ale viditelné
+      return 0.85;
+    })
+    .attr("marker-end", d => {
+      if (isMainEdge(d)) return `url(#arrow-${d.type}-HI)`;   // velká šipka stejné barvy vztahu
+      if (dimIndirect) return `url(#arrow-${d.type}-DIM)`;    // vybledlá šipka stejné barvy vztahu
+      return `url(#arrow-${d.type})`;
+    });
 
   link.append("title").text(d => d.type);
 
-  // drag behavior: po puštění uzel zůstane (PIN)
+  // drag: keep pinned
   function dragstarted(event, d) {
     if (!event.active) sim.alphaTarget(0.2).restart();
     d.fx = d.x;
@@ -322,27 +517,40 @@ function draw(nodes, edges) {
   }
   function dragended(event, d) {
     if (!event.active) sim.alphaTarget(0);
-    d.pinned = true; // fx/fy zůstávají nastavené
+    d.pinned = true;
   }
 
-  // nodes
+  // ----- NODES: default normál, dim jen když checkbox -----
   const node = g.selectAll("circle")
     .data(nodes)
     .enter()
     .append("circle")
-    .attr("r", d => radiusFor(d))
+    .attr("r", d => {
+      const base = radiusFor(d);
+      const isHost = (d.labels || []).includes("Host");
+      const hi = isHiNode(d);
+
+      if (isHost && hi) return base + 10;
+      if (isHost) return base + 6;
+      if (hi) return base + 4;
+      return base;
+    })
     .attr("fill", d => nodeColor(d))
-    .attr("stroke", "rgba(0,0,0,0.25)")
-    .attr("stroke-width", 1)
+    .attr("opacity", d => {
+      if (pathOnly) return 1.0;
+      if (!dimIndirect) return 1.0;          // NORMAL = nic není vybledlé
+      return isHiNode(d) ? 1.0 : 0.18;       // DIM
+    })
+    .attr("stroke", d => (isHiNode(d) ? "rgba(0,0,0,0.55)" : "rgba(0,0,0,0.20)"))
+    .attr("stroke-width", d => (isHiNode(d) ? 2.2 : 1.0))
     .on("click", async (event, d) => {
-      // SHIFT+klik = drill-down, normální klik = panel s detaily
       if (event.shiftKey) {
         await loadGraph(d.id);
       } else {
         await loadNodeDetails(d);
       }
     })
-    .on("dblclick", (_, d) => { // UNPIN
+    .on("dblclick", (_, d) => {
       d.fx = null;
       d.fy = null;
       d.pinned = false;
@@ -352,11 +560,16 @@ function draw(nodes, edges) {
 
   node.append("title").text(d => `${d.title}\n${labelOf(d)}\n${d.id}`);
 
-  // labels toggle
+  // ----- LABELS: default normál, dim jen když checkbox -----
   const labelsOn = () => document.getElementById("toggleLabels")?.checked ?? true;
-
-  // halo pro čitelnost
   const labelGroup = g.append("g");
+
+  const labelOpacity = (d) => {
+    if (!labelsOn()) return 0.0;
+    if (pathOnly) return 0.95;
+    if (!dimIndirect) return 0.95;
+    return isHiNode(d) ? 0.95 : 0.10;
+  };
 
   const textHalo = labelGroup.selectAll("text.halo")
     .data(nodes)
@@ -371,7 +584,7 @@ function draw(nodes, edges) {
     .attr("stroke", "white")
     .attr("stroke-width", 3.5)
     .attr("stroke-linejoin", "round")
-    .attr("opacity", labelsOn() ? 0.95 : 0.0);
+    .attr("opacity", d => labelOpacity(d));
 
   const text = labelGroup.selectAll("text.label")
     .data(nodes)
@@ -384,15 +597,14 @@ function draw(nodes, edges) {
     .attr("dy", 4)
     .attr("pointer-events", "none")
     .attr("fill", "#111")
-    .attr("opacity", labelsOn() ? 0.95 : 0.0);
+    .attr("opacity", d => labelOpacity(d));
 
   document.getElementById("toggleLabels").onchange = () => {
-    const op = labelsOn() ? 0.95 : 0.0;
-    text.attr("opacity", op);
-    textHalo.attr("opacity", op);
+    text.attr("opacity", d => labelOpacity(d));
+    textHalo.attr("opacity", d => labelOpacity(d));
   };
 
-  // tick updates
+  // ticks
   sim.on("tick", () => {
     link
       .attr("x1", d => (nodeById.get(d.source.id || d.source) || {}).x)
@@ -401,45 +613,15 @@ function draw(nodes, edges) {
       .attr("y2", d => (nodeById.get(d.target.id || d.target) || {}).y);
 
     node.attr("cx", d => d.x).attr("cy", d => d.y);
-
     text.attr("x", d => d.x).attr("y", d => d.y);
     textHalo.attr("x", d => d.x).attr("y", d => d.y);
   });
 }
 
-
-//listing podle cve, malware atp
-async function loadList(kind) {
-  const map = {
-    hosts: "/api/list/hosts?limit=300",
-    cves: "/api/list/cves?limit=500",
-    malware: "/api/list/malware?limit=500",
-    intrusion: "/api/list/intrusion-sets?limit=500",
-    nvts: "/api/list/nvts?limit=500",
-  };
-
-  const data = await apiJson(map[kind]);
-  if (!data) return;
-  renderList(kind, data.results || []);
-}
-
-function renderList(kind, items) {
-  const el = document.getElementById("leftList");
-  el.innerHTML = "";
-  items.forEach(it => {
-    const div = document.createElement("div");
-    div.className = "item";
-    div.textContent = it.title;
-    div.onclick = () => loadGraph(it.id);
-    el.appendChild(div);
-  });
-}
-
-
-
-// pin/unpin all (klávesa P)
+// pin/unpin all (P)
 document.addEventListener("keydown", (e) => {
-  if (e.key.toLowerCase() !== "p") return;
+  const k = (e.key || "").toLowerCase();
+  if (k !== "p") return;
   if (!currentSim || !currentNodes.length) return;
 
   const pinnedCount = currentNodes.filter(n => n.fx != null && n.fy != null).length;
@@ -460,8 +642,40 @@ document.addEventListener("keydown", (e) => {
   currentSim.alpha(0.6).restart();
 });
 
-// wiring
-document.getElementById("btn").onclick = doSearch;
-document.getElementById("q").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") doSearch();
-});
+// init search
+function initSearch() {
+  const btn = document.getElementById("btn");
+  const q = document.getElementById("q");
+  if (!btn || !q) {
+    console.error("initSearch: missing #btn or #q");
+    return;
+  }
+
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    doSearch();
+  });
+
+  q.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      doSearch();
+    }
+  });
+}
+
+async function initLists() {
+  initSearch();
+  await loadList("hosts");
+  await loadList("cves");
+  await loadList("nvts");
+  await loadList("malware");
+  await loadList("intrusion");
+}
+
+// když už DOMContentLoaded proběhl, spusť hned
+if (document.readyState === "loading") {
+  window.addEventListener("DOMContentLoaded", initLists);
+} else {
+  initLists();
+}

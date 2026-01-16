@@ -3,60 +3,102 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/style.css" />
   <title>CTI Graph</title>
-  <style>
-    body { margin:0; font-family: system-ui, sans-serif; }
-    header { padding:12px; display:flex; gap:8px; align-items:center; border-bottom:1px solid #3333; }
-    #q { width:420px; padding:8px; }
-    #results { max-height:180px; overflow:auto; border:1px solid #3333; margin: 0 12px 12px; }
-    .item { padding:8px; cursor:pointer; border-bottom:1px solid #3332; }
-    .item:hover { background:#0000000a; }
-    #graph { width: 100vw; height: calc(100vh - 260px); }
-    .hint { font-size: 12px; opacity: .75; padding: 0 12px 12px; }
-  </style>
 </head>
+
 <body>
   <header>
     <strong>CTI Graph</strong>
-    <input id="q" placeholder="Fulltext: CVE-..., IP, malware name, attack pattern..." />
+    <input id="q" placeholder="Fulltext: CVE-..., IP, malware name, intrusion set..." />
     <button id="btn">Hledat</button>
     <label>radius <input id="radius" type="number" value="2" min="1" max="4" style="width:48px"></label>
+    <!-- toggleLabels checkbox přidává graph.js dynamicky -->
   </header>
 
-  <div class="hint">
-    Klikni na výsledek → načte se subgraph kolem uzlu (Host/CVE/Malware/AttackPattern/IntrusionSet…).
+  <div id="layout">
+    <!-- LEFT SIDEBAR -->
+    <div id="sidebar">
+      <div class="sectionTitle">Evidence</div>
+
+      <details open>
+        <summary>Hosts</summary>
+        <input id="filter_hosts" class="filter" placeholder="filter (IP)..." />
+        <div id="list_hosts" class="listbox"></div>
+      </details>
+
+      <details>
+        <summary>CVE</summary>
+        <input id="filter_cves" class="filter" placeholder="filter (CVE-...)" />
+        <div id="list_cves" class="listbox"></div>
+      </details>
+
+      <details>
+        <summary>NVT</summary>
+        <input id="filter_nvts" class="filter" placeholder="filter (NVT name / oid)..." />
+        <div id="list_nvts" class="listbox"></div>
+      </details>
+
+      <div class="sectionTitle" style="margin-top:14px;">CTI</div>
+
+      <details>
+        <summary>Malware</summary>
+        <input id="filter_malware" class="filter" placeholder="filter (malware name)..." />
+        <div id="list_malware" class="listbox"></div>
+      </details>
+
+      <details>
+        <summary>Intrusion Sets</summary>
+        <input id="filter_intrusion" class="filter" placeholder="filter (group name)..." />
+        <div id="list_intrusion" class="listbox"></div>
+      </details>
+
+      <div class="note">
+        Klik na položku v seznamu = načti graf. <br>
+        Klik na uzel v grafu = detail panel (Neo4j). <br>
+        SHIFT+klik = drill-down (subgraph).
+      </div>
+    </div>
+
+    <!-- MAIN -->
+    <div id="main">
+      <div class="hint">
+        Klikni na výsledek → načte se subgraph kolem uzlu (Host/CVE/Malware/IntrusionSet…).
+      </div>
+
+      <div id="results"></div>
+      <svg id="graph"></svg>
+    </div>
   </div>
 
-  <div id="results"></div>
-  <svg id="graph"></svg>
+  <!-- RIGHT CONTEXT PANEL (detail uzlu) -->
   <div id="ctx" style="
-  position: fixed;
-  top: 70px;
-  right: 12px;
-  width: 360px;
-  max-height: calc(100vh - 90px);
-  overflow: auto;
-  background: rgba(255,255,255,0.97);
-  border: 1px solid rgba(0,0,0,0.15);
-  border-radius: 14px;
-  padding: 12px 12px 10px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.15);
-  display: none;
-  z-index: 9999;
-">
-  <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-    <div id="ctxTitle" style="font-weight:700; font-size:14px;">Node</div>
-    <button id="ctxClose" style="border:1px solid #0002; background:#fff; border-radius:10px; padding:4px 10px; cursor:pointer;">×</button>
+    position: fixed;
+    top: 70px;
+    right: 12px;
+    width: 360px;
+    max-height: calc(100vh - 90px);
+    overflow: auto;
+    background: rgba(255,255,255,0.97);
+    border: 1px solid rgba(0,0,0,0.15);
+    border-radius: 14px;
+    padding: 12px 12px 10px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+    display: none;
+    z-index: 9999;
+  ">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+      <div id="ctxTitle" style="font-weight:700; font-size:14px;">Node</div>
+      <button id="ctxClose" style="border:1px solid #0002; background:#fff; border-radius:10px; padding:4px 10px; cursor:pointer;">×</button>
+    </div>
+    <div id="ctxMeta" style="margin-top:6px; font-size:12px; opacity:.75;"></div>
+    <hr style="border:none; border-top:1px solid #0001; margin:10px 0;">
+    <div style="font-weight:600; font-size:13px; margin-bottom:6px;">Properties</div>
+    <pre id="ctxProps" style="white-space:pre-wrap; font-size:12px; background:#f6f6f6; padding:10px; border-radius:12px; margin:0;"></pre>
+
+    <div style="font-weight:600; font-size:13px; margin:10px 0 6px;">Neighbors</div>
+    <div id="ctxNeigh" style="font-size:12px;"></div>
   </div>
-  <div id="ctxMeta" style="margin-top:6px; font-size:12px; opacity:.75;"></div>
-  <hr style="border:none; border-top:1px solid #0001; margin:10px 0;">
-  <div style="font-weight:600; font-size:13px; margin-bottom:6px;">Properties</div>
-  <pre id="ctxProps" style="white-space:pre-wrap; font-size:12px; background:#f6f6f6; padding:10px; border-radius:12px;"></pre>
-
-  <div style="font-weight:600; font-size:13px; margin:10px 0 6px;">Neighbors</div>
-  <div id="ctxNeigh" style="font-size:12px;"></div>
-</div>
-
 
   <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
   <script src="/static/graph.js"></script>

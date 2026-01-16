@@ -38,16 +38,15 @@ NEO4J_DB   = os.getenv("NEO4J_DB")
 #CVE-2023-20862 - muj vlastni CVE z OpenVAS
 #CVE-2024-21887 - nejkrasnejsi CVE z OpenCTI
 
-openvas_cves = [
-        "CVE-2024-21887"
-    ]
+
+#PRO TESTOVANI: PROTO TO TAM MAM V TE DB 2X TY VECI...
+
+#openvas_cves = [
+#        "CVE-2024-21887"
+#    ]
 
 
-
-
-
-
-CVE_NAME = os.getenv("CVE_NAME", "CVE-2023-41928")
+#CVE_NAME = os.getenv("CVE_NAME", "CVE-2023-41928")
 HOPS = int(os.getenv("HOPS", "1"))          # kolik "skoků" od CVE rozbalit
 PAGE_SIZE = int(os.getenv("PAGE_SIZE", "200"))
 
