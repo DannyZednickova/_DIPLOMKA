@@ -491,6 +491,13 @@ def write_to_neo4j(nodes: Dict[str, Node], edges: Dict[str, Edge]) -> None:
     """
     from neo4j import GraphDatabase
 
+    vuln_id_to_cve = {
+        n.id: n.name.strip().upper()
+        for n in nodes.values()
+        if n.entity_type == "Vulnerability" and (n.name or "").upper().startswith("CVE-")
+    }
+
+
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
 
     # Constraints (spusť jednou; tady safe IF NOT EXISTS)
@@ -514,65 +521,90 @@ def write_to_neo4j(nodes: Dict[str, Node], edges: Dict[str, Edge]) -> None:
         return (entity_type or "Unknown").replace("-", "")
 
     def upsert_node(tx, n: Node):
-        label = to_neo4j_label(n.entity_type)
+        et = n.entity_type or "Unknown"
+        name = (n.name or "").strip()
 
-        # Base uzel vždy StixEntity + navíc typový label
+        def to_neo4j_label(entity_type: str) -> str:
+            return (entity_type or "Unknown").replace("-", "")
+
+        # --- SPECIAL CASE: Vulnerability / CVE ---
+        if et == "Vulnerability" and name.upper().startswith("CVE-"):
+            cve = name.upper()
+
+            # 1) STIX uzel (OpenCTI) – samostatný CVE uzel pro CTI část grafu
+            tx.run(
+                """
+                MERGE (e:StixEntity {opencti_id: $id})
+                SET e:OpenCTI_Vulnerability,
+                    e.name = $name,
+                    e.entity_type = 'Vulnerability'
+                """,
+                id=n.id,
+                name=cve,
+            )
+
+            # 2) business uzel (OpenVAS / exposure vrstva)
+            tx.run(
+                """
+                MERGE (v:Vulnerability {cve: $cve})
+                SET v.name = $cve,
+                    v.opencti_id = $id
+                """,
+                cve=cve,
+                id=n.id,
+            )
+
+            # 3) šipka business -> STIX (to chceš do vizualizace)
+            tx.run(
+                """
+                MATCH (v:Vulnerability {cve: $cve})
+                MATCH (e:StixEntity {opencti_id: $id})
+                MERGE (v)-[:HAS_STIX]->(e)
+                """,
+                cve=cve,
+                id=n.id,
+            )
+            return
+
+        # --- DEFAULT: ostatní entity jako StixEntity + typový label ---
+        stix_label = to_neo4j_label(et)
         tx.run(
             f"""
             MERGE (e:StixEntity {{opencti_id: $id}})
-            SET e:{label},
+            SET e:{stix_label},
                 e.name = $name,
                 e.entity_type = $etype
             """,
             id=n.id,
-            name=n.name,
-            etype=n.entity_type,
+            name=name or n.id,
+            etype=et,
         )
-
-        # Pokud je to CVE, udělej i "business" uzel Vulnerability podle cve stringu (volitelné)
-        if n.entity_type == "Vulnerability" and (n.name or "").upper().startswith("CVE-"):
-            tx.run(
-                """
-                MERGE (v:Vulnerability {cve: $cve})
-                SET v.opencti_id = $id, v.name = $cve
-                """,
-                cve=n.name.upper(),
-                id=n.id,
-            )
-            tx.run(
-                """
-                MATCH (e:StixEntity {opencti_id: $id})
-                MATCH (v:Vulnerability {cve: $cve})
-                MERGE (e)-[:IS]->(v)
-                """,
-                id=n.id,
-                cve=n.name.upper(),
-            )
 
     def upsert_edge(tx, e: Edge):
-        # Neo4j relationship type musí být v dotazu statický string – skládáme ho v Pythonu
         reltype = e.relationship_type.upper().replace("-", "_")
 
-        # 1) Zajisti uzly
-        tx.run(
-            """
-            MERGE (a:StixEntity {opencti_id: $from_id})
-            MERGE (b:StixEntity {opencti_id: $to_id})
-            """,
-            from_id=e.from_id,
-            to_id=e.to_id,
-        )
+        def resolve_endpoint(oid: str):
+            # Pokud je to OpenCTI vulnerability id, mapuj na business Vulnerability(cve)
+            if oid in vuln_id_to_cve:
+                return ("Vulnerability", "cve", vuln_id_to_cve[oid])
+            # Jinak běžný STIX uzel
+            return ("StixEntity", "opencti_id", oid)
 
-        # 2) Vytvoř hranu
+        a_label, a_key, a_val = resolve_endpoint(e.from_id)
+        b_label, b_key, b_val = resolve_endpoint(e.to_id)
+
+        tx.run(f"MERGE (a:{a_label} {{{a_key}: $a_val}})", a_val=a_val)
+        tx.run(f"MERGE (b:{b_label} {{{b_key}: $b_val}})", b_val=b_val)
+
         tx.run(
             f"""
-            MATCH (a:StixEntity {{opencti_id: $from_id}})
-            MATCH (b:StixEntity {{opencti_id: $to_id}})
+            MATCH (a:{a_label} {{{a_key}: $a_val}})
+            MATCH (b:{b_label} {{{b_key}: $b_val}})
             MERGE (a)-[r:{reltype}]->(b)
             SET r.opencti_id = $rid
             """,
-            from_id=e.from_id,
-            to_id=e.to_id,
+            a_val=a_val,
+            b_val=b_val,
             rid=e.id,
         )
 
