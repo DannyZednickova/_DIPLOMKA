@@ -2,14 +2,21 @@ from neo4j import GraphDatabase
 import json
 from pathlib import Path
 from typing import Any, Optional, Dict, List
-
 from neo4j import GraphDatabase
+from dotenv import load_dotenv
+import os
 
 
-NEO4J_URI = "bolt://127.0.0.1:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASS = "82008200aA"
-NEO4J_DB = "openvastest"
+
+load_dotenv()
+# OpenCTI connection
+OPENCTI_URL = os.getenv("OPENCTI_URL")
+OPENCTI_TOKEN = os.getenv("OPENCTI_TOKEN")
+NEO4J_URI = os.getenv("NEO4J_URI")
+NEO4J_USER = os.getenv("NEO4J_USER")
+NEO4J_PASS = os.getenv("NEO4J_PASS")
+NEO4J_DB   = os.getenv("NEO4J_DB")
+
 
 driver = GraphDatabase.driver(
     NEO4J_URI,

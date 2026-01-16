@@ -1,54 +1,57 @@
 
 from __future__ import annotations
-
 import os
-import re
-import json
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 import logging
 from pycti import OpenCTIApiClient
+from dotenv import load_dotenv
+
 
 # ----------------------------
 # CONFIG
 # ----------------------------
 
-# ZAKAZAT OTAVNE INFO z pycti/api loggeru (ponecha WARNING/ERROR)
+# ZAKAZAT OTRAVNE INFO z pycti/api loggeru (ponecha WARNING/ERROR)
 logging.basicConfig(level=logging.WARNING)
 logging.getLogger("api").setLevel(logging.WARNING)
 logging.getLogger("pycti").setLevel(logging.WARNING)
 
 
+load_dotenv()
+# OpenCTI connection
+OPENCTI_URL = os.getenv("OPENCTI_URL")
+OPENCTI_TOKEN = os.getenv("OPENCTI_TOKEN")
+NEO4J_URI = os.getenv("NEO4J_URI")
+NEO4J_USER = os.getenv("NEO4J_USER")
+NEO4J_PASS = os.getenv("NEO4J_PASS")
+NEO4J_DB   = os.getenv("NEO4J_DB")
+
+
+
+
+
+
+#konfigurace vstupu do zpracovani
+
 #CVE-2023-20862 - muj vlastni CVE z OpenVAS
 #CVE-2024-21887 - nejkrasnejsi CVE z OpenCTI
 
-openvas_cves = [
-        "CVE-2024-21887"
-    ]
+
+#PRO TESTOVANI: PROTO TO TAM MAM V TE DB 2X TY VECI...
+
+#openvas_cves = [
+#        "CVE-2024-21887"
+#    ]
 
 
-
-
-
-CVE_NAME = os.getenv("CVE_NAME", "CVE-2023-41928")
+#CVE_NAME = os.getenv("CVE_NAME", "CVE-2023-41928")
 HOPS = int(os.getenv("HOPS", "1"))          # kolik "skoků" od CVE rozbalit
 PAGE_SIZE = int(os.getenv("PAGE_SIZE", "200"))
-"""
-Konfigurace OpenCTI GraphQL endpointu a autentizačního tokenu.
-"""
-OPENCTI_URL = "http://localhost:8080/graphql"
-OPENCTI_TOKEN = "2cf990a2-5b35-4894-a214-da959ee51b31"
 
 
-"""
-Konfigurace připojení k Neo4j databázi.
-Používá se přímé bolt:// připojení bez routingu.
-"""
-NEO4J_URI = "bolt://127.0.0.1:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASS = "82008200aA"
-DB_NAME     = "openvastest"
+
 
 
 # typy objektů, které chceme vypisovat a typicky ukládat do Neo4j
@@ -574,7 +577,7 @@ def write_to_neo4j(nodes: Dict[str, Node], edges: Dict[str, Edge]) -> None:
         )
 
     # DŮLEŽITÉ: zapisuj do DB_NAME
-    with driver.session(database=DB_NAME) as session:
+    with driver.session(database=NEO4J_DB ) as session:
         session.execute_write(create_constraints)
 
         for n in nodes.values():
@@ -584,7 +587,7 @@ def write_to_neo4j(nodes: Dict[str, Node], edges: Dict[str, Edge]) -> None:
             session.execute_write(upsert_edge, e)  # ✅
 
     driver.close()
-    print(f"[Neo4j] Import hotový do DB '{DB_NAME}'.")
+    print(f"[Neo4j] Import hotový do DB '{NEO4J_DB }'.")
 
 
 if __name__ == "__main__":

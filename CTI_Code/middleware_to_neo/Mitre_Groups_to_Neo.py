@@ -5,14 +5,22 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from difflib import SequenceMatcher
+from dotenv import load_dotenv
+import os
+
 
 from neo4j import GraphDatabase
 
+load_dotenv()
+# OpenCTI connection
+OPENCTI_URL = os.getenv("OPENCTI_URL")
+OPENCTI_TOKEN = os.getenv("OPENCTI_TOKEN")
+NEO4J_URI = os.getenv("NEO4J_URI")
+NEO4J_USER = os.getenv("NEO4J_USER")
+NEO4J_PASS = os.getenv("NEO4J_PASS")
+NEO4J_DB   = os.getenv("NEO4J_DB")
 
-NEO4J_URI = "bolt://127.0.0.1:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASS = "82008200aA"
-NEO4J_DB = "openvastest"
+
 
 driver = GraphDatabase.driver(
     NEO4J_URI,

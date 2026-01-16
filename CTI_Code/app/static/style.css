@@ -1,0 +1,115 @@
+body { margin:0; font-family: system-ui, sans-serif; }
+
+header {
+  padding:12px;
+  display:flex;
+  gap:8px;
+  align-items:center;
+  border-bottom:1px solid #3333;
+  position: sticky;
+  top: 0;
+  background: white;
+  z-index: 1000;
+}
+
+#q { width:420px; padding:8px; }
+
+.hint { font-size: 12px; opacity: .75; padding: 0 12px 12px; }
+
+/* Layout */
+#layout {
+  display:flex;
+  gap:12px;
+  padding:10px 12px;
+  box-sizing: border-box;
+}
+
+#sidebar {
+  width: 360px;
+  flex: 0 0 360px;
+}
+
+#main {
+  flex: 1;
+  min-width: 600px;
+}
+
+/* Fulltext results */
+#results {
+  max-height:180px;
+  overflow:auto;
+  border:1px solid #3333;
+  margin: 0 0 12px;
+  border-radius: 10px;
+  background: white;
+}
+
+.item { padding:8px; cursor:pointer; border-bottom:1px solid #3332; }
+.item:hover { background:#0000000a; }
+
+/* Graph */
+#graph {
+  width: 100%;
+  height: calc(100vh - 220px);
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 12px;
+  background: white;
+}
+
+/* Sidebar listboxes */
+.listbox {
+  max-height: 220px;
+  overflow:auto;
+  border:1px solid rgba(0,0,0,.12);
+  border-radius:10px;
+  padding:6px;
+  background:#fff;
+  margin-bottom: 10px;
+}
+
+.listbox .item {
+  padding:6px 8px;
+  border-bottom:1px solid rgba(0,0,0,.06);
+  cursor:pointer;
+}
+
+.listbox .item:hover { background: rgba(0,0,0,.04); }
+
+details {
+  border: 1px solid rgba(0,0,0,0.10);
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: white;
+  margin-bottom: 10px;
+}
+
+summary {
+  cursor: pointer;
+  font-weight: 650;
+  user-select: none;
+}
+
+.filter {
+  width:100%;
+  padding:6px;
+  margin:8px 0;
+  box-sizing:border-box;
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.15);
+}
+
+.sectionTitle {
+  font-weight: 800;
+  margin: 6px 0 10px;
+  letter-spacing: .2px;
+}
+
+.note {
+  margin-top:10px;
+  font-size:12px;
+  opacity:.7;
+  line-height:1.35;
+}
+
+/* Right context panel (exists in HTML) */
+#ctx pre { margin:0; }

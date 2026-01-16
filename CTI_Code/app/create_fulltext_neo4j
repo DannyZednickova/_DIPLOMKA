@@ -1,0 +1,27 @@
+SHOW FULLTEXT INDEXES YIELD name, entityType, labelsOrTypes, properties, options
+RETURN name, labelsOrTypes, properties
+ORDER BY name;
+
+CREATE FULLTEXT INDEX stix_fulltext IF NOT EXISTS
+FOR (n:StixEntity)
+ON EACH [n.name, n.entity_type, n.description, n.opencti_id];
+
+CREATE FULLTEXT INDEX vuln_fulltext IF NOT EXISTS
+FOR (n:Vulnerability)
+ON EACH [n.cve];
+
+CREATE FULLTEXT INDEX host_fulltext IF NOT EXISTS
+FOR (n:Host)
+ON EACH [n.ip];
+
+CREATE FULLTEXT INDEX nvt_fulltext IF NOT EXISTS
+FOR (n:NVT)
+ON EACH [n.oid, n.name, n.family];
+
+CREATE FULLTEXT INDEX attackpattern_fulltext IF NOT EXISTS
+FOR (n:AttackPattern)
+ON EACH [n.name, n.mitre_id];
+
+CREATE FULLTEXT INDEX mitre_intrusionset_fulltext IF NOT EXISTS
+FOR (n:MitreIntrusionSet)
+ON EACH [n.name, n.mitre_id, n.aliases];

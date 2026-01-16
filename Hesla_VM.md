@@ -1,4 +1,4 @@
-vboxuser/vboxuser - na WIN10 virtual 10.0.0.17
+vboxuser/vboxuser - na WIN10 virtual 10.0.0.18  /defaultni je changeme
 
 WIN98 - Danny/danny - na windows 98 -10.0.0.9
 
@@ -7,6 +7,10 @@ metasploit msfadmi**n/msfadmin 10.0.0.20**
 **host: - moje PC 10.0.0.7**
 
 **Iphone 10.0.0.31**
+
+
+
+**OPENVAS p59stup do masiny primo: admin/adminroot**
 
 
 
