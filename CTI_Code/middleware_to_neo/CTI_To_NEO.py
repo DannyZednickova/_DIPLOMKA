@@ -9,6 +9,39 @@ from pycti import OpenCTIApiClient
 from dotenv import load_dotenv
 
 
+#### VELKA SPATNA, PROBLEM ######
+#### problem CVE je jediná výjimka – tam děláme dvojuzel (business + STIX)... velka spatna
+####
+
+""" 
+priklad STIX Domain Obect.... SDO k pochopeni:
+{
+  "id": "a1d9b2c3-....",
+  "entity_type": "stix-core-relationship",
+  "relationship_type": "uses",
+  "fromId": "11111111-....",
+  "toId": "22222222-....",
+  "from": { "id": "11111111-....", "entity_type": "Intrusion-Set", "name": "Some Group" },
+  "to":   { "id": "22222222-....", "entity_type": "Malware",        "name": "Some Malware" }
+}
+
+A pak k tomu prdnem SCR  - Stix Core Relationship ... to jsou ty hrany
+
+{
+  "id": "a1d9b2c3-....",
+  "entity_type": "stix-core-relationship",
+  "relationship_type": "uses",
+  "fromId": "11111111-....",
+  "toId": "22222222-....",
+  "from": { "id": "11111111-....", "entity_type": "Intrusion-Set", "name": "Some Group" },
+  "to":   { "id": "22222222-....", "entity_type": "Malware",        "name": "Some Malware" }
+}
+
+
+
+"""
+
+
 # ----------------------------
 # CONFIG
 # ----------------------------
