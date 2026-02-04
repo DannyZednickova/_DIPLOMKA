@@ -4,16 +4,16 @@ import subprocess
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Načti .env (pokud používáš)
+# Načti .env
 load_dotenv()
 
 # Root projektu (adresář, kde leží tento middleware)
 BASE_DIR = Path(__file__).resolve().parent
 
-# Pokud máš skripty v jiném adresáři, uprav:
+# Skripty
 SCRIPTS_DIR = BASE_DIR  # nebo BASE_DIR / "middleware_to_neo"
 
-# Seznam kroků v pořadí (sekvenčně)
+# Seznam kroků (sekvenčně)
 PIPELINE = [
     ("OpenVAS -> Neo4j",            SCRIPTS_DIR / "OpenVas_To_NEO.py"),
     ("MITRE ATT&CK Patterns -> Neo4j", SCRIPTS_DIR / "Mitre_Attack_Pattern_To_NEO.py"),
