@@ -157,11 +157,38 @@ def rel_other_id(rel: dict, pivot_id: str) -> Optional[str]:
 
 def safe_entity_type(obj: dict) -> str:
     # pycti používá 'entity_type' (např. "Malware", "Intrusion-Set")
+    #vytahuje entity typ z objektu STIX... pokud neni tak type, jinak napise Unknow
     return obj.get("entity_type") or obj.get("type") or "Unknown"
 
 
-def safe_name(obj: dict) -> str:
+def safe_entity_name(obj: dict) -> str:
+    # pokusí se vytáhnout jméno/identifikátor objektu STIX - byva to nekonzistetní
     return obj.get("name") or obj.get("value") or obj.get("standard_id") or obj.get("id") or "Unnamed"
+
+def safe_entity_description(obj: dict) -> str | None:
+    desc = obj.get("description")
+    return desc if isinstance(desc, str) and desc.strip() else None
+
+def safe_entity_aliases(obj: dict) -> tuple[str, ...]:
+    aliases = obj.get("aliases")
+    if isinstance(aliases, list):
+        return tuple(str(a) for a in aliases if a is not None)
+    return ()
+
+def safe_entity_confidence(obj: dict) -> int | None:
+    conf = obj.get("confidence")
+    return conf if isinstance(conf, int) else None
+
+def safe_entity_labels(obj: dict) -> tuple[str, ...]:
+    labels = obj.get("labels")
+    if isinstance(labels, list):
+        return tuple(str(l) for l in labels if l is not None)
+    return ()
+
+def safe_entity_source(obj: dict) -> str:
+    src = obj.get("x_opencti_source")
+    return src if isinstance(src, str) and src.strip() else "opencti"
+
 
 
 # ----------------------------
@@ -214,13 +241,27 @@ def read_sdo(object_id: str) -> Optional[dict]:
 
 
 # ----------------------------
-# Graph expansion (BFS)
+# Graph expansion ....
+# vezmeme CVE
+#
+# najdeme věci, které jsou s ním přímo propojené (1 relace)
+#
+# pak věci propojené s těmi věcmi (2 relace)
+#
+# a skončíme po N krocích
 # ----------------------------
 @dataclass(frozen=True)
 class Node:
     id: str
     entity_type: str
     name: str
+    description: str | None = None
+    aliases: tuple[str, ...] = ()
+    confidence: int | None = None
+    labels: tuple[str, ...] = ()
+    source: str = "opencti"
+
+
 
 
 @dataclass(frozen=True)
@@ -237,38 +278,47 @@ def normalize_rel_type(rt: Optional[str]) -> str:
 
 def expand_from_seed_ids(seed_ids: List[str], hops: int) -> Tuple[Dict[str, Node], Dict[str, Edge]]:
     """
-    Expand outward using relationships where current node is 'fromId' (outgoing).
-    For the first layer (CVE) we also include incoming (toId) to capture things pointing to CVE.
+    vezmeme CVE, respektive jeho ID, tahle funcke nevi nic o CVE a najdee věci, které jsou s ním přímo propojené (1 relace)
+     pak věci propojené s těmi věcmi (2 relace) a skončí po N krocích
+     pouziva list relationship from a list relationshio into po n krocich.
+
     """
     nodes: Dict[str, Node] = {}
     edges: Dict[str, Edge] = {}
 
     visited: Set[str] = set()
-    frontier: List[Tuple[str, int]] = [(sid, 0) for sid in seed_ids]
+    nodes_to_process: List[Tuple[str, int]] = [(sid, 0) for sid in seed_ids]
 
-    while frontier:
-        current_id, depth = frontier.pop(0)
-        if current_id in visited:
+    while nodes_to_process:
+        current_node_id, depth = nodes_to_process.pop(0)
+        if current_node_id in visited:
             continue
-        visited.add(current_id)
+        visited.add(current_node_id)
 
         # read node details (may fail for some ids)
-        obj = read_sdo(current_id)
+        obj = read_sdo(current_node_id)
         if obj:
-            et = safe_entity_type(obj)
-            nm = safe_name(obj)
-            nodes[current_id] = Node(id=current_id, entity_type=et, name=nm)
+            nodes[current_node_id] = Node(
+                id=current_node_id,
+                entity_type=safe_entity_type(obj),
+                name=safe_entity_name(obj),
+                description=safe_entity_description(obj),
+                aliases=safe_entity_aliases(obj),
+                confidence=safe_entity_confidence(obj),
+                labels=safe_entity_labels(obj),
+                source=safe_entity_source(obj),
+            )
         else:
-            # fallback node
-            nodes[current_id] = Node(id=current_id, entity_type="Unknown", name=current_id)
+            nodes[current_node_id] = Node(id=current_node_id, entity_type="Unknown", name=current_node_id)
 
         if depth >= hops:
             continue
 
         # outgoing rels (fromId = current)
-        out_rels = list_relationships_from_id(current_id)
+        # z toho CVE hleda vychazejici relace, vztahy
+        out_rels = list_relationships_from_id(current_node_id)
         for r in out_rels:
-            rid = r.get("id") or f"{current_id}-out-{len(edges)}"
+            rid = r.get("id") or f"{current_node_id}-out-{len(edges)}"
             rt = normalize_rel_type(r.get("relationship_type"))
             f = rel_end_id(r, "from") or r.get("fromId")
             t = rel_end_id(r, "to") or r.get("toId")
@@ -278,36 +328,45 @@ def expand_from_seed_ids(seed_ids: List[str], hops: int) -> Tuple[Dict[str, Node
             edges[rid] = Edge(id=rid, relationship_type=rt, from_id=f, to_id=t)
 
             if t not in visited:
-                frontier.append((t, depth + 1))
+                nodes_to_process.append((t, depth + 1))
 
         # optional: also include incoming (toId = current) — useful at depth 0 (CVE) and sometimes beyond
         # Aby to nebylo explozivní, omezíme na depth == 0 (tj. pro CVE).
-        if depth == 0:
-            in_rels = list_relationships_to_id(current_id)
-            for r in in_rels:
-                rid = r.get("id") or f"{current_id}-in-{len(edges)}"
-                rt = normalize_rel_type(r.get("relationship_type"))
-                f = rel_end_id(r, "from") or r.get("fromId")
-                t = rel_end_id(r, "to") or r.get("toId")
-                if not f or not t:
-                    continue
+        INCOMING_REL_TYPES = {"uses", "exploits", "indicates", "targets", "attributed-to"}
 
-                edges[rid] = Edge(id=rid, relationship_type=rt, from_id=f, to_id=t)
 
-                if f not in visited:
-                    frontier.append((f, depth + 1))
+        if depth <= 2:
+            for rt in INCOMING_REL_TYPES:
+                for r in list_relationships_to_id(current_node_id, rel_type=rt):
+                    rid = r.get("id") or f"{current_node_id}-in-{len(edges)}"
+                    f = rel_end_id(r, "from") or r.get("fromId")
+                    t = rel_end_id(r, "to") or r.get("toId")
+                    if not f or not t:
+                        continue
+
+                    edges[rid] = Edge(
+                        id=rid,
+                        relationship_type=normalize_rel_type(r.get("relationship_type")),
+                        from_id=f,
+                        to_id=t,
+                    )
+
+                    if f not in visited:
+                        nodes_to_process.append((f, depth + 1))
+
+
 
     return nodes, edges
 
 
-# MALWARE EXTENSIONS
-
+# MALWARE EXTENSIONS - dead
+"""
 def fg(filters):
-    """FilterGroup helper ve formátu co chce OpenCTI"""
+    FilterGroup helper ve formátu co chce OpenCTI
     return {"mode": "and", "filters": filters, "filterGroups": []}
 
 def rel_end_id(rel: dict, side: str):
-    """Zvládne rel['fromId']/rel['toId'] i rel['from']['id']/rel['to']['id']"""
+    Duplicita z výše, ale pro jistotu zde
     key = f"{side}Id"
     if key in rel and rel.get(key):
         return rel.get(key)
@@ -329,6 +388,7 @@ def list_rels_from(obj_id: str, rel_type: str | None = None, first: int = 200):
     return client.stix_core_relationship.list(filters=fg(flt), first=first, get_all=True)
 
 def read_sdo(obj_id: str):
+Opet tuplicita pro malware ... 
     try:
         return client.stix_domain_object.read(id=obj_id)
     except Exception:
@@ -360,7 +420,7 @@ def add_edge_simple(
         from_id=from_id,
         to_id=to_id,
     )
-
+"""
 # ----------------------------
 # Main
 # ----------------------------
@@ -434,7 +494,10 @@ def main():
         # zaruč CVE uzel
         nodes[cve_id] = Node(id=cve_id, entity_type="Vulnerability", name=cve.get("name") or cve_name)
 
-        # 5) MALWARE EXTENSION -> doplň do nodes/edges (aby se to propsalo do Neo4j)
+
+
+
+        """      # 5) MALWARE EXTENSION -> doplň do nodes/edges (aby se to propsalo do Neo4j)
         print("=== Malware expansion (find group/actor/campaign) ===")
         for o in direct_objs:
             if o.get("entity_type") != "Malware":
@@ -458,7 +521,7 @@ def main():
                 for x in {u["id"]: u for u in used_by}.values():
                     print("    *", x["entity_type"], x.get("name"))
 
-                    # ✅ přidej do lokálního grafu pro tento CVE
+                    # přidej do lokálního grafu pro tento CVE
                     add_node_from_obj(nodes, x)  # Intrusion-Set / Threat-Actor / Campaign
                     add_node_from_obj(nodes, o)  # Malware
                     add_edge_simple(
@@ -495,12 +558,13 @@ def main():
                     )
             else:
                 print("  ATTRIBUTED_TO: nic")
-
+        """
         # 6) sloučení do globální agregace (MERGE přes opencti_id)
         all_nodes.update(nodes)
         all_edges.update(edges)
 
         print(f"[CVE DONE] nodes={len(nodes)} edges={len(edges)}")
+
 
     # 7) ZÁVĚR: zapiš jednou do Neo4j
     print("\n" + "=" * 80)
@@ -510,6 +574,14 @@ def main():
 
     print(f"[Neo4j] writing aggregated graph: nodes={len(all_nodes)} edges={len(all_edges)}")
     write_to_neo4j(all_nodes, all_edges)
+
+
+
+
+
+
+
+
 
 
 # ----------------------------
@@ -587,7 +659,7 @@ def write_to_neo4j(nodes: Dict[str, Node], edges: Dict[str, Edge]) -> None:
                 id=n.id,
             )
 
-            # 3) šipka business -> STIX (to chceš do vizualizace)
+            # 3) šipka business -> STIX
             tx.run(
                 """
                 MATCH (v:Vulnerability {cve: $cve})
@@ -649,7 +721,7 @@ def write_to_neo4j(nodes: Dict[str, Node], edges: Dict[str, Edge]) -> None:
             session.execute_write(upsert_node, n)
 
         for e in edges.values():
-            session.execute_write(upsert_edge, e)  # ✅
+            session.execute_write(upsert_edge, e)
 
     driver.close()
     print(f"[Neo4j] Import hotový do DB '{NEO4J_DB }'.")
