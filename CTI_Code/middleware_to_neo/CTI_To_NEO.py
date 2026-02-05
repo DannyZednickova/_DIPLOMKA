@@ -72,11 +72,11 @@ NEO4J_DB   = os.getenv("NEO4J_DB")
 #CVE-2024-21887 - nejkrasnejsi CVE z OpenCTI
 
 
-#PRO TESTOVANI: PROTO TO TAM MAM V TE DB 2X TY VECI...
+#PRO TESTOVANI at nemusim zapinat cely midleware proster, tak jen jedno CVEcko
 
-#openvas_cves = [
-#        "CVE-2024-21887"
-#    ]
+openvas_cves = [
+        "CVE-2024-21887"
+    ]
 
 
 #CVE_NAME = os.getenv("CVE_NAME", "CVE-2023-41928")
@@ -165,9 +165,18 @@ def safe_entity_name(obj: dict) -> str:
     # pokusí se vytáhnout jméno/identifikátor objektu STIX - byva to nekonzistetní
     return obj.get("name") or obj.get("value") or obj.get("standard_id") or obj.get("id") or "Unnamed"
 
+
+"""
+S ALIENVAULTEM TOHLE NEPROBIHA, PROTOZE ZADNE DESCRIPTION atp., NEMAJÍ, je mozne ale pouzit i jine
+datasety nez jen alienvault a ty to mozna mit budou....
+
+"""
+#
 def safe_entity_description(obj: dict) -> str | None:
     desc = obj.get("description")
     return desc if isinstance(desc, str) and desc.strip() else None
+
+
 
 def safe_entity_aliases(obj: dict) -> tuple[str, ...]:
     aliases = obj.get("aliases")
@@ -625,12 +634,11 @@ def write_to_neo4j(nodes: Dict[str, Node], edges: Dict[str, Edge]) -> None:
         # "Intrusion-Set" -> "IntrusionSet", "Attack-Pattern" -> "AttackPattern"
         return (entity_type or "Unknown").replace("-", "")
 
+
     def upsert_node(tx, n: Node):
         et = n.entity_type or "Unknown"
         name = (n.name or "").strip()
 
-        def to_neo4j_label(entity_type: str) -> str:
-            return (entity_type or "Unknown").replace("-", "")
 
         # --- SPECIAL CASE: Vulnerability / CVE ---
         if et == "Vulnerability" and name.upper().startswith("CVE-"):
@@ -642,10 +650,20 @@ def write_to_neo4j(nodes: Dict[str, Node], edges: Dict[str, Edge]) -> None:
                 MERGE (e:StixEntity {opencti_id: $id})
                 SET e:OpenCTI_Vulnerability,
                     e.name = $name,
-                    e.entity_type = 'Vulnerability'
+                    e.entity_type = 'Vulnerability',
+                     e.description = $description,
+                     e.aliases = $aliases,
+                     e.confidence = $confidence,
+                     e.labels = $labels,
+                     e.source = $source
                 """,
                 id=n.id,
                 name=cve,
+                description=n.description,
+                aliases=list(n.aliases) if n.aliases else [],
+                confidence=n.confidence,
+                labels=list(n.labels) if n.labels else [],
+                source=n.source or "opencti",
             )
 
             # 2) business uzel (OpenVAS / exposure vrstva)
