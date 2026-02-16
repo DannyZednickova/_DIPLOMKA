@@ -1,0 +1,189 @@
+{
+      "id": "intrusion-set--5647ff00-0651-5bfe-b569-fbdbb619ddad",
+      "spec_version": "2.1",
+      "revoked": false,
+      "confidence": 100,
+      "created": "2026-02-13T18:50:06.513Z",
+      "modified": "2026-02-14T11:27:57.079Z",
+      "name": "DragonForce",
+      "x_opencti_id": "5d06d72f-729b-45ad-ac27-2b9d765f88fb",
+      "x_opencti_type": "Intrusion-Set",
+      "type": "intrusion-set",
+      "created_by_ref": "identity--e52b2fa3-2af0-5e53-ad38-17d54b3d61cb",
+      "object_marking_refs": [
+        "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"
+      ]
+    },
+{
+      "id": "intrusion-set--5647ff00-0651-5bfe-b569-fbdbb619ddad",
+      "spec_version": "2.1",
+      "revoked": false,
+      "confidence": 100,
+      "created": "2026-02-13T18:50:06.513Z",
+      "modified": "2026-02-14T11:27:57.079Z",
+      "name": "DragonForce",
+      "x_opencti_id": "5d06d72f-729b-45ad-ac27-2b9d765f88fb",
+      "x_opencti_type": "Intrusion-Set",
+      "type": "intrusion-set",
+      "created_by_ref": "identity--e52b2fa3-2af0-5e53-ad38-17d54b3d61cb",
+      "object_marking_refs": [
+        "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"
+      ]
+    },
+    {
+      "id": "attack-pattern--85520f53-08e8-5683-8e9b-b4d7a7ffe3dc",
+      "spec_version": "2.1",
+      "revoked": false,
+      "confidence": 100,
+      "created": "2026-02-13T18:24:48.611Z",
+      "modified": "2026-02-14T04:40:01.595Z",
+      "name": "T1543",
+      "x_mitre_id": "T1543",
+      "external_references": [
+        {
+          "source_name": "mitre-attack",
+          "url": "https://attack.mitre.org/techniques/T1543",
+          "external_id": "T1543"
+        }
+      ],
+      "x_opencti_id": "d498eccf-1ad6-421a-b699-673f18569ec6",
+      "x_opencti_type": "Attack-Pattern",
+      "type": "attack-pattern",
+      "created_by_ref": "identity--e52b2fa3-2af0-5e53-ad38-17d54b3d61cb",
+      "object_marking_refs": [
+        "marking-definition--34098fce-860f-48ae-8e50-ebd3cc5e41da"
+      ]
+    },
+    {
+      "id": "indicator--9e156211-a8fd-5f52-a341-dde4e8fb57bc",
+      "spec_version": "2.1",
+      "revoked": true,
+      "confidence": 100,
+      "created": "2026-02-13T18:51:59.980Z",
+      "modified": "2026-02-14T12:55:14.378Z",
+      "pattern_type": "stix",
+      "pattern_version": "2.1",
+      "pattern": "[file:hashes.'SHA-256' = '2e7682abe30d93afb3bd9dee0011c450c1d72d727151344b8b7360441571e007']",
+      "name": "2e7682abe30d93afb3bd9dee0011c450c1d72d727151344b8b7360441571e007",
+      "valid_from": "2024-11-27T18:19:28.000Z",
+      "valid_until": "2025-11-24T02:13:13.628Z",
+      "x_opencti_score": 20,
+      "x_opencti_detection": false,
+      "x_opencti_main_observable_type": "StixFile",
+      "x_opencti_observable_values": [
+        {
+          "type": "StixFile",
+          "value": null,
+          "hashes": [
+            {
+              "algorithm": "SHA-256",
+              "hash": "2e7682abe30d93afb3bd9dee0011c450c1d72d727151344b8b7360441571e007"
+            }
+          ]
+        }
+      ],
+      "labels": [
+        "botnet",
+        "brute-force",
+        "cryptocurrency",
+        "cve-2014-8361",
+        "cve-2017-17106",
+        "cve-2017-17215",
+        "cve-2017-18368",
+        "cve-2018-10561",
+        "cve-2018-10562",
+        "cve-2018-9995",
+        "cve-2022-30075",
+        "cve-2022-30525",
+        "cve-2024-27348",
+        "ddos",
+        "discord",
+        "discordgo",
+        "iot",
+        "mirai",
+        "pybot",
+        "script kiddie",
+        "telegram",
+        "vulnerability exploitation"
+      ],
+      "x_opencti_id": "36ba12a0-71d3-455b-8cca-35c98df61f55",
+      "x_opencti_type": "Indicator",
+      "type": "indicator",
+      "created_by_ref": "identity--e52b2fa3-2af0-5e53-ad38-17d54b3d61cb",
+      "object_marking_refs": [
+        "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"
+      ]
+    },
+    {
+      "id": "attack-pattern--3373b98e-039d-5e95-99ff-547d2aab1e39",
+      "spec_version": "2.1",
+      "revoked": false,
+      "confidence": 100,
+      "created": "2026-02-13T18:24:34.897Z",
+      "modified": "2026-02-14T04:40:01.950Z",
+      "name": "T1036",
+      "x_mitre_id": "T1036",
+      "external_references": [
+        {
+          "source_name": "mitre-attack",
+          "url": "https://attack.mitre.org/techniques/T1036",
+          "external_id": "T1036"
+        }
+      ],
+      "x_opencti_id": "e9f28b9c-8a11-4c2a-ac37-3d5d05f8eaeb",
+      "x_opencti_type": "Attack-Pattern",
+      "type": "attack-pattern",
+      "created_by_ref": "identity--e52b2fa3-2af0-5e53-ad38-17d54b3d61cb",
+      "object_marking_refs": [
+        "marking-definition--34098fce-860f-48ae-8e50-ebd3cc5e41da"
+      ]
+    },
+    {
+      "id": "attack-pattern--ac16fadd-c0cd-5cca-a81d-e877cd43c4e9",
+      "spec_version": "2.1",
+      "revoked": false,
+      "confidence": 100,
+      "created": "2026-02-13T18:24:42.969Z",
+      "modified": "2026-02-13T18:28:58.572Z",
+      "name": "T1046",
+      "x_mitre_id": "T1046",
+      "external_references": [
+        {
+          "source_name": "mitre-attack",
+          "url": "https://attack.mitre.org/techniques/T1046",
+          "external_id": "T1046"
+        }
+      ],"x_opencti_id": "21af1230-ee71-42f1-b74e-fabd51248b4d",
+      "x_opencti_type": "Attack-Pattern",
+      "type": "attack-pattern",
+      "created_by_ref": "identity--e52b2fa3-2af0-5e53-ad38-17d54b3d61cb",
+      "object_marking_refs": [
+        "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"
+      ]
+    },
+
+     {
+      "id": "vulnerability--64e807a9-aa7d-5fbd-99c0-2e7125a29815",
+      "spec_version": "2.1",
+      "revoked": false,
+      "confidence": 100,
+      "created": "2026-02-13T18:33:59.345Z",
+      "modified": "2026-02-14T00:00:13.795Z",
+      "name": "CVE-2018-10561",
+      "x_opencti_cisa_kev": false,
+      "external_references": [
+        {
+          "source_name": "NIST NVD",
+          "url": "https://nvd.nist.gov/vuln/detail/CVE-2018-10561",
+          "external_id": "CVE-2018-10561"
+        }
+      ],
+      "x_opencti_id": "c1c7ce3b-d0bd-484d-b691-cceb3e9a2ebf",
+      "x_opencti_type": "Vulnerability",
+      "type": "vulnerability",
+      "created_by_ref": "identity--e52b2fa3-2af0-5e53-ad38-17d54b3d61cb",
+      "object_marking_refs": [
+        "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"
+      ]
+    },
+
