@@ -26,11 +26,13 @@ client = OpenCTIApiClient(OPENCTI_URL, OPENCTI_TOKEN)
 
 # zjisti entity_type (Attack-Pattern / Report / Incident / ...)
 entity = client.stix_core_object.read(id=ENTITY_ID)
+print(entity)
 if not entity:
     raise SystemExit(f"Objekt nenalezen: {ENTITY_ID}")
 
 
 entity_type = entity.get("entity_type") or entity.get("type")
+print(entity_type)
 if not entity_type:
     raise SystemExit(f"Neznám entity_type pro: {ENTITY_ID}")
 
@@ -39,6 +41,7 @@ bundle = client.stix2.get_stix_bundle_or_object_from_entity_id(
     entity_type=entity_type,
     entity_id=ENTITY_ID,
     mode=MODE,
+
 )
 
 
