@@ -1,156 +1,180 @@
-# middleware_to_neo/NEW_CTI_TO_NEO.py
+from __future__ import annotations
 import os
 import json
-import logging
+from typing import Dict, Any, List, Tuple
 from dotenv import load_dotenv
 from pycti import OpenCTIApiClient
-
-from typing import Dict, List, Tuple, Set
 
 # ----------------------------
 # CONFIG
 # ----------------------------
 load_dotenv()
 
-logging.basicConfig(level=logging.WARNING)
-logging.getLogger("api").setLevel(logging.WARNING)
-logging.getLogger("pycti").setLevel(logging.WARNING)
-
 OPENCTI_URL = os.getenv("OPENCTI_URL", "http://localhost:8080/graphql")
-OPENCTI_TOKEN = os.getenv("OPENCTI_TOKEN", "CHANGE_ME")
+OPENCTI_TOKEN = os.getenv("OPENCTI_TOKEN", "3c6f2d8e-9c6e-4f4a-9f7a-5a8c9a8b1e22")
 
-CVE_NAME = os.getenv("CVE_NAME", "CVE-2024-21887").strip().upper()
-MODE = os.getenv("MODE", "full")  # full / simple
+import logging
+
+logging.getLogger("api").setLevel(logging.WARNING)
+logging.getLogger("opencti").setLevel(logging.WARNING)
+
+
+# Vymyslený příklad 5 CVE (změň si dle datasetu)
+CVE_NAMES = [
+    "CVE-2024-21887",
+    "CVE-2023-23397",
+    "CVE-2021-44228",
+    "CVE-2022-30190",
+    "CVE-2023-34362",
+]
+
+MODE = os.getenv("MODE", "full")  # full / simple (na vztahy targets typicky chceš full)
+
+# Jaké vztahy tě zajímají
+REL_TYPES = {"targets", "exploits", "uses"}
+
+# Jaké typy zdrojových objektů chceme vidět
+SOURCE_TYPES = {"attack-pattern", "malware", "intrusion-set"}  # STIX "type" jsou lower-case
 
 client = OpenCTIApiClient(OPENCTI_URL, OPENCTI_TOKEN)
 
-def build_index(stix_bundle: dict) -> Tuple[Dict[str, dict], List[dict]]:
-    objs = stix_bundle.get("objects", []) or []
-    by_id = {o.get("id"): o for o in objs if isinstance(o, dict) and o.get("id")}
-    rels = [o for o in objs if isinstance(o, dict) and o.get("type") == "relationship"]
-    return by_id, rels
 
-def obj_name(o: dict) -> str:
-    return o.get("name") or o.get("value") or o.get("x_mitre_id") or o.get("id") or "<?>"
-
-def obj_type(o: dict) -> str:
-    return o.get("type") or o.get("x_opencti_type") or "<?>"
-
-def is_stix(prefix: str, stix_id: str) -> bool:
-    return isinstance(stix_id, str) and stix_id.startswith(prefix + "--")
-
-def pretty_rel(by_id: dict, r: dict) -> str:
-    rel_id = r.get("id") or "relationship--<?>"
-    rel_xid = r.get("x_opencti_id") or "<?>"
-    rt = (r.get("relationship_type") or "?").upper()
-
-    s = r.get("source_ref") or "<?>"
-    t = r.get("target_ref") or "<?>"
-    so = by_id.get(s, {"id": s})
-    to = by_id.get(t, {"id": t})
-
-    return (
-        f"REL(id={rel_id}, x_opencti_id={rel_xid}, type={rt})\n"
-        f"  SRC(ref={s}, type={obj_type(so)}, name={obj_name(so)}, x_opencti_id={so.get('x_opencti_id','<?>')})\n"
-        f"  TGT(ref={t}, type={obj_type(to)}, name={obj_name(to)}, x_opencti_id={to.get('x_opencti_id','<?>')})"
-    )
-
-def get_cve_by_name(cve_name: str) -> dict:
-    cve = client.vulnerability.read(
+# ----------------------------
+# Helpers
+# ----------------------------
+def find_cve_by_name(cve_name: str) -> Dict[str, Any] | None:
+    """Najde vulnerability v OpenCTI podle jména (CVE-xxxx-xxxx) a vrátí OpenCTI entity dict."""
+    return client.vulnerability.read(
         filters={
             "mode": "and",
             "filters": [{"key": "name", "values": [cve_name]}],
             "filterGroups": [],
         }
     )
-    if not cve:
-        raise SystemExit(f"[ERROR] CVE nenalezeno: {cve_name}")
-    return cve
 
-def export_bundle_by_entity_id(entity_id: str, mode: str) -> dict:
-    entity = client.stix_core_object.read(id=entity_id)
-    if not entity:
-        return {"type": "bundle", "objects": []}
-    entity_type = entity.get("entity_type") or entity.get("type")
-    if not entity_type:
-        return {"type": "bundle", "objects": []}
 
+def get_bundle_for_opencti_entity(entity_type: str, entity_id: str, mode: str) -> Dict[str, Any]:
+    """Stáhne STIX bundle pro zadanou entitu (OpenCTI interní ID)."""
     return client.stix2.get_stix_bundle_or_object_from_entity_id(
         entity_type=entity_type,
         entity_id=entity_id,
         mode=mode,
     )
 
-def find_cve_stix_id(by_id: dict, cve_name: str) -> str:
-    for oid, o in by_id.items():
-        if o.get("type") == "vulnerability" and (o.get("name") or "").strip().upper() == cve_name.strip().upper():
-            return oid
-    raise SystemExit(f"[ERROR] CVE '{cve_name}' nebylo v CVE bundle nalezeno jako vulnerability objekt.")
 
-def main():
-    # 1) najdi CVE přes name -> OpenCTI entity id
-    cve = get_cve_by_name(CVE_NAME)
-    ENTITY_ID = cve["id"]
-    print(f"[OK] CVE nalezeno: {cve.get('name')} | ENTITY_ID(OpenCTI)={ENTITY_ID}")
+def index_bundle_objects(bundle: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Index STIX objektů podle STIX id (např. vulnerability--..., attack-pattern--...)."""
+    idx: Dict[str, Dict[str, Any]] = {}
+    for obj in bundle.get("objects", []):
+        obj_id = obj.get("id")
+        if obj_id:
+            idx[obj_id] = obj
+    return idx
 
-    # 2) export CVE bundle (full/simple)
-    bundle = export_bundle_by_entity_id(ENTITY_ID, mode=MODE)
-    print(f"[OK] entity_type=Vulnerability | mode={MODE}")
 
-    # ---- CVE bundle index ----
-    cve_by_id, cve_rels = build_index(bundle)
-    CVE_STIX_ID = find_cve_stix_id(cve_by_id, CVE_NAME)
+def extract_cve_edges_from_bundle(
+    bundle: Dict[str, Any],
+    cve_name: str,
+    rel_types: set[str] = REL_TYPES,
+    source_types: set[str] = SOURCE_TYPES,
+) -> List[Tuple[str, str, str, str, str]]:
+    """
+    Vrátí seznam hran ve formátu:
+    (source_type, source_name, relationship_type, target_type, target_name)
+    pro vztahy mířící na vulnerability objekt v bundlu.
+    """
+    objects_idx = index_bundle_objects(bundle)
 
-    print("\n" + "=" * 100)
-    print(f"[CVE] {CVE_NAME} | OpenCTI ENTITY_ID={ENTITY_ID} | CVE_STIX_ID={CVE_STIX_ID} | mode={MODE}")
-    print("=" * 100)
+    # najdi STIX objekt vulnerability podle name
+    vuln_obj = None
+    for obj in bundle.get("objects", []):
+        if obj.get("type") == "vulnerability" and obj.get("name") == cve_name:
+            vuln_obj = obj
+            break
+    if vuln_obj is None:
+        return []
 
-    # ----------------------------
-    # LEVEL 1: z CVE bundle
-    # (AttackPattern/IntrusionSet/Malware) -(targets|exploits)-> CVE
-    # + seedy x_opencti_id pro intrusion-sety a malware (nepoužito dál)
-    # ----------------------------
-    L1: List[dict] = []
-    intrusion_opencti_ids: Set[str] = set()
-    malware_opencti_ids: Set[str] = set()
+    vuln_stix_id = vuln_obj["id"]
 
-    for r in cve_rels:
-        if (r.get("relationship_type") or "").lower() not in ("targets", "exploits"):
-            continue
-        if r.get("target_ref") != CVE_STIX_ID:
-            continue
+    edges: List[Tuple[str, str, str, str, str]] = []
 
-        src = r.get("source_ref")
-        if not isinstance(src, str):
+    for obj in bundle.get("objects", []):
+        if obj.get("type") != "relationship":
             continue
 
-        if not (is_stix("attack-pattern", src) or is_stix("intrusion-set", src) or is_stix("malware", src)):
+        rtype = obj.get("relationship_type")
+        if rtype not in rel_types:
             continue
 
-        L1.append(r)
+        src_ref = obj.get("source_ref")
+        tgt_ref = obj.get("target_ref")
+        if not src_ref or not tgt_ref:
+            continue
 
-        src_obj = cve_by_id.get(src, {})
-        src_xid = src_obj.get("x_opencti_id")
-        if is_stix("intrusion-set", src) and isinstance(src_xid, str):
-            intrusion_opencti_ids.add(src_xid)
-        if is_stix("malware", src) and isinstance(src_xid, str):
-            malware_opencti_ids.add(src_xid)
+        # chceme vztahy kde target je ta vulnerability
+        if tgt_ref != vuln_stix_id:
+            continue
 
-    print("\n[LEVEL 1] (from CVE bundle)  (AttackPattern/IntrusionSet/Malware) -(targets|exploits)-> CVE")
-    if not L1:
-        print("  (nic)")
+        src_obj = objects_idx.get(src_ref)
+        tgt_obj = objects_idx.get(tgt_ref)
+
+        if not src_obj or not tgt_obj:
+            continue
+
+        # filtr zdrojových typů (attack-pattern / malware / intrusion-set)
+        if src_obj.get("type") not in source_types:
+            continue
+
+        edges.append((
+            src_obj.get("type", "?"),
+            src_obj.get("name", src_ref),
+            rtype,
+            tgt_obj.get("type", "?"),
+            tgt_obj.get("name", tgt_ref),
+        ))
+
+    return edges
+
+
+# ----------------------------
+# Main
+# ----------------------------
+all_results = {}
+
+for cve_name in CVE_NAMES:
+    cve = find_cve_by_name(cve_name)
+    if not cve:
+        print(f"[SKIP] CVE nenalezeno v OpenCTI: {cve_name}")
+        continue
+
+    # DŮLEŽITÉ:
+    # cve["id"] je OpenCTI interní UUID, to je správné pro export bundle.
+    bundle = get_bundle_for_opencti_entity("Vulnerability", cve["id"], MODE)
+
+    edges = extract_cve_edges_from_bundle(bundle=bundle, cve_name=cve_name)
+
+    all_results[cve_name] = {
+        "opencti_id": cve["id"],
+        "edges": [
+            {
+                "source_type": e[0],
+                "source_name": e[1],
+                "relationship_type": e[2],
+                "target_type": e[3],
+                "target_name": e[4],
+            }
+            for e in edges
+        ],
+    }
+
+    print(f"\n=== {cve_name} ===")
+    print(f"OpenCTI ID: {cve['id']}")
+    if not edges:
+        print("Žádné edges (targets/exploits/uses) na attack-pattern/malware/intrusion-set v bundlu.")
     else:
-        for r in L1:
-            print("  -", pretty_rel(cve_by_id, r))
+        for (st, sn, rt, tt, tn) in edges:
+            print(f"{sn} [{st}] --({rt})-> {tn} [{tt}]")
 
-    print("\n[LEVEL 1 seeds]")
-    print(f"  IntrusionSet x_opencti_id count: {len(intrusion_opencti_ids)}")
-    print(f"  Malware      x_opencti_id count: {len(malware_opencti_ids)}")
-
-    print("\n" + "-" * 100)
-    print("[SUMMARY]")
-    print(f"  L1 rels: {len(L1)} | IntrusionSet seeds: {len(intrusion_opencti_ids)} | Malware seeds: {len(malware_opencti_ids)}")
-    print("-" * 100 + "\n")
-
-if __name__ == "__main__":
-    main()
+# Pokud chceš i JSON výstup do souboru:
+# with open("cve_edges.json", "w", encoding="utf-8") as f:
+#     json.dump(all_results, f, ensure_ascii=False, indent=2)
