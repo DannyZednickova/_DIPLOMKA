@@ -170,3 +170,4 @@ for cve_name in CVE_NAMES:
     if not found_any:
         print("Žádné vztahy (targets/exploits/uses) na attack-pattern/malware/intrusion-set pro tuto CVE.")
 
+
