@@ -36,6 +36,7 @@ NEO4J_DB = os.getenv("NEO4J_DB")  # např. "newcti"
 # (někdy je default "neo4j")
 MODE = os.getenv("MODE", "full")
 
+"""
 CVE_NAMES = [
     "CVE-2024-21887",
     "CVE-2023-23397",
@@ -43,6 +44,7 @@ CVE_NAMES = [
     "CVE-2022-30190",
     "CVE-2023-34362",
 ]
+"""
 
 REL_TYPES = {"targets", "exploits", "uses"}
 SOURCE_TYPES = {"attack-pattern", "malware", "intrusion-set"}

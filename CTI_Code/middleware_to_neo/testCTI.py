@@ -17,7 +17,7 @@ OPENCTI_TOKEN = os.getenv("OPENCTI_TOKEN", "3c6f2d8e-9c6e-4f4a-9f7a-5a8c9a8b1e22
 #ENTITY_ID = os.getenv("ENTITY_ID", "429bccca-754e-4aea-a65f-4950976ee700")  # Intrusion set
 
 #identifikator test
-ENTITY_ID = os.getenv("ENTITY_ID", "malware--c944c24b-110d-5bec-8a0c-3a71e4fc82f7")
+ENTITY_ID = os.getenv("ENTITY_ID", "vulnerability--0dda0210-8681-5f3a-b881-890bba5e92b7")
 
 
 MODE = os.getenv("MODE", "full")  # full / simple
