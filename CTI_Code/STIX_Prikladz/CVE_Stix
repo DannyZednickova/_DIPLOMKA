@@ -1,0 +1,148 @@
+
+{
+  "type": "bundle",
+  "id": "bundle--992a4c5d-2cb8-4055-b4a0-4a3e9f9b82ba",
+  "objects": [
+    {
+      "id": "identity--e52b2fa3-2af0-5e53-ad38-17d54b3d61cb",
+      "spec_version": "2.1",
+      "identity_class": "organization",
+      "name": "AlienVault",
+      "created": "2026-02-13T18:05:13.775Z",
+      "modified": "2026-02-13T18:05:13.775Z",
+      "x_opencti_id": "d555eb95-54fc-4f66-9648-0af16674fcc3",
+      "x_opencti_type": "Organization",
+      "type": "identity"
+    },
+    {
+      "type": "marking-definition",
+      "spec_version": "2.1",
+      "id": "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9",
+      "created": "2017-01-20T00:00:00.000Z",
+      "definition_type": "tlp",
+      "name": "TLP:CLEAR",
+      "definition": {
+        "tlp": "clear"
+      }
+    },
+    {
+      "id": "vulnerability--f934cc3d-a211-5626-8043-6507f62e8140",
+      "spec_version": "2.1",
+      "revoked": false,
+      "confidence": 100,
+      "created": "2026-02-13T18:41:02.411Z",
+      "modified": "2026-02-14T04:32:13.948Z",
+      "name": "CVE-2024-21887",
+      "x_opencti_cisa_kev": false,
+      "external_references": [
+        {
+          "source_name": "NIST NVD",
+          "url": "https://nvd.nist.gov/vuln/detail/CVE-2024-21887",
+          "external_id": "CVE-2024-21887"
+        }
+      ],
+      "x_opencti_id": "b53ddb38-7465-4dd5-b469-84a3e8d1b5a1",
+      "x_opencti_type": "Vulnerability",
+      "type": "vulnerability",
+      "created_by_ref": "identity--e52b2fa3-2af0-5e53-ad38-17d54b3d61cb",
+      "object_marking_refs": [
+        "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"
+      ]
+    },
+    {
+      "id": "relationship--025d3549-d25b-5891-8248-c70bc5e3742f",
+      "spec_version": "2.1",
+      "relationship_type": "targets",
+      "revoked": false,
+      "confidence": 100,
+      "lang": "en",
+      "created": "2026-02-13T18:52:02.922Z",
+      "modified": "2026-02-14T12:56:20.025Z",
+      "x_opencti_id": "3943bba5-0b6f-432a-8ebb-e02f22134b48",
+      "x_opencti_type": "targets",
+      "type": "relationship",
+      "created_by_ref": "identity--e52b2fa3-2af0-5e53-ad38-17d54b3d61cb",
+      "object_marking_refs": [
+        "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"
+      ],
+      "source_ref": "attack-pattern--64e4d0b4-c714-5405-aa23-f86a97588a3c",
+      "target_ref": "vulnerability--f934cc3d-a211-5626-8043-6507f62e8140"
+    },
+    {
+      "id": "relationship--026053bb-8fb4-56ae-84bc-a7157fb2216a",
+      "spec_version": "2.1",
+      "relationship_type": "targets",
+      "revoked": false,
+      "confidence": 100,
+      "lang": "en",
+      "created": "2026-02-13T18:46:04.168Z",
+      "modified": "2026-02-14T08:21:31.020Z",
+      "x_opencti_id": "123efb3f-8322-49c6-aabf-44c6df98a62a",
+      "x_opencti_type": "targets",
+      "type": "relationship",
+      "created_by_ref": "identity--e52b2fa3-2af0-5e53-ad38-17d54b3d61cb",
+      "object_marking_refs": [
+        "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"
+      ],
+      "source_ref": "malware--680e296b-3b00-5de9-879c-4a5597db7551",
+      "target_ref": "vulnerability--f934cc3d-a211-5626-8043-6507f62e8140"
+    },
+ },
+    {
+      "id": "attack-pattern--64e4d0b4-c714-5405-aa23-f86a97588a3c",
+      "spec_version": "2.1",
+      "revoked": false,
+      "confidence": 100,
+      "created": "2026-02-13T18:24:34.898Z",
+      "modified": "2026-02-13T18:24:36.858Z",
+      "name": "T1016",
+      "x_mitre_id": "T1016",
+      "external_references": [
+        {
+          "source_name": "mitre-attack",
+          "url": "https://attack.mitre.org/techniques/T1016",
+          "external_id": "T1016"
+        }
+      ],
+      "x_opencti_id": "1a475f12-0b3c-4dfe-b9ef-a070d4dc3c11",
+      "x_opencti_type": "Attack-Pattern",
+      "type": "attack-pattern",
+      "created_by_ref": "identity--e52b2fa3-2af0-5e53-ad38-17d54b3d61cb",
+      "object_marking_refs": [
+        "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"
+      ]
+    },
+    {
+      "id": "malware--680e296b-3b00-5de9-879c-4a5597db7551",
+      "spec_version": "2.1",
+      "revoked": false,
+      "confidence": 100,
+      "created": "2026-02-13T18:46:04.140Z",
+      "modified": "2026-02-14T08:21:23.532Z",
+      "name": "BRICKSTORM",
+      "is_family": false,
+      "x_opencti_id": "852d605f-26ee-4fbe-8dc5-81d635703a57",
+      "x_opencti_type": "Malware",
+      "type": "malware",
+      "created_by_ref": "identity--e52b2fa3-2af0-5e53-ad38-17d54b3d61cb",
+      "object_marking_refs": [
+        "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"
+      ]
+    },
+    {
+      "id": "intrusion-set--5647ff00-0651-5bfe-b569-fbdbb619ddad",
+      "spec_version": "2.1",
+      "revoked": false,
+      "confidence": 100,
+      "created": "2026-02-13T18:50:06.513Z",
+      "modified": "2026-02-14T11:27:57.079Z",
+      "name": "DragonForce",
+      "x_opencti_id": "5d06d72f-729b-45ad-ac27-2b9d765f88fb",
+      "x_opencti_type": "Intrusion-Set",
+      "type": "intrusion-set",
+      "created_by_ref": "identity--e52b2fa3-2af0-5e53-ad38-17d54b3d61cb",
+      "object_marking_refs": [
+        "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"
+      ]
+    },
+

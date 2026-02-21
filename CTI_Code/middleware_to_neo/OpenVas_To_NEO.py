@@ -24,20 +24,17 @@ OPENVAS_XML_PATH = Path(os.getenv("OPENVAS_XML_PATH"))
 
 # ============================================================
 # CTI TRIGGER CONFIG
+# spusti se, kdyz chceme do Neo4J nacpat OpenCTI data o CVE atp.,
 # ============================================================
 # CTI_ENABLE: umožní/zakáže volání dalšího skriptu CTI_To_NEO.py
-CTI_ENABLE = os.getenv("CTI_ENABLE", "1") == "1"
-
+CTI_To_Nei_ENABLE = os.getenv("CTI_ENABLE", "1") == "1"
 # Cesta k externímu CTI skriptu (ten má dělat OpenCTI -> Neo4j enrichment)
 CTI_SCRIPT_PATH = Path(os.getenv("CTI_SCRIPT_PATH"))
-
 # Limit pro počet CVE, které se předají CTI skriptu
 CTI_MAX_CVES = int(os.getenv("CTI_MAX_CVES", "900"))
-
 # Parametry se předávají CTI skriptu přes env proměnné
 CTI_HOPS = os.getenv("HOPS", "1")
 CTI_PAGE_SIZE = os.getenv("PAGE_SIZE", "500")
-
 # Filtr: do CTI enrichmentu posílej jen CVE u kterých je cvss_base v OpenVAS >= threshold
 ENRICH_ONLY_CVSS_GE = float(os.getenv("ENRICH_ONLY_CVSS_GE", "0"))
 
@@ -118,7 +115,7 @@ def parse_tags_kv(tags: Optional[str]) -> Dict[str, str]:
     - vezme jen páry s "="
     - vrátí dict {k: v}
     - první výskyt klíče vyhraje (nepřepisuje se)
-    Užitek: dostaneš summary/solution často právě z tags.
+    Užitek: summary/solution často právě z tags.
     """
     if not tags:
         return {}
@@ -141,7 +138,7 @@ def extract_cves(result_elem: ET.Element) -> List[str]:
     Postup:
     1) Projde všechny <ref> uzly a vezme ty s type="cve".
        - CVE může být v atributu id="CVE-...." nebo jako text uvnitř <ref>.
-       - použije regex CVE_RE, aby odfiltroval bordel a našel validní CVE.
+       - použije regex CVE_RE, aby odfiltroval a našel validní CVE.
     2) Fallback: někdy je CVE uvedené v <nvt><cve>...</cve>
     3) Dedup: odstraní duplicity při zachování pořadí (seen set).
     Výstup: seznam unikátních CVE (uppercase) pro daný result.
@@ -321,7 +318,7 @@ def trigger_cti_to_neo(cves: List[str]) -> None:
     5) spustí CTI skript stejným Pythonem (sys.executable)
     6) vypíše stdout/stderr a při chybě vyhodí výjimku
     """
-    if not CTI_ENABLE:
+    if not CTI_To_Nei_ENABLE:
         print("[CTI] Disabled (CTI_ENABLE=0).")
         return
 
@@ -334,12 +331,12 @@ def trigger_cti_to_neo(cves: List[str]) -> None:
             uniq.append(c)
             seen.add(c)
 
-    # pokud nemáš co enrichovat, končíš
+    # pokud nemš co enrichovat, končí
     if not uniq:
         print("[CTI] No CVEs to pass to CTI_To_NEO.py")
         return
 
-    # limituješ počet CVE pro bezpečnost / výkon / délku běhu
+    # limituje počet CVE pro bezpečnost / výkon / délku běhu
     uniq = uniq[:CTI_MAX_CVES]
     cve_csv = ",".join(uniq)
 
@@ -347,7 +344,7 @@ def trigger_cti_to_neo(cves: List[str]) -> None:
     if not os.path.exists(CTI_SCRIPT_PATH):
         raise FileNotFoundError(f"CTI script not found: {CTI_SCRIPT_PATH}")
 
-    # připravíš env pro subprocess
+    # připraví env pro subprocess
     env = os.environ.copy()
     env["CVE_LIST"] = cve_csv
 
