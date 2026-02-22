@@ -14,10 +14,10 @@ OPENCTI_TOKEN = os.getenv("OPENCTI_TOKEN", "3c6f2d8e-9c6e-4f4a-9f7a-5a8c9a8b1e22
 #ENTITY_ID = os.getenv("ENTITY_ID", "058688fb-642d-48ff-ad11-14e3e4902995") #attack pattern MITRE AND ATTACK
 #ENTITY_ID = os.getenv("ENTITY_ID", "52984ef0-3299-4bf8-88a6-096cad6a3da5")  # MALWARE
 #ENTITY_ID = os.getenv("ENTITY_ID", "b53ddb38-7465-4dd5-b469-84a3e8d1b5a1")  # CVE
-#ENTITY_ID = os.getenv("ENTITY_ID", "429bccca-754e-4aea-a65f-4950976ee700")  # Intrusion set
+ENTITY_ID = os.getenv("ENTITY_ID", "2aa66f81-862d-40b9-ad66-5f6b246b2614")  # Intrusion set
 
 #identifikator test
-ENTITY_ID = os.getenv("ENTITY_ID", "vulnerability--0dda0210-8681-5f3a-b881-890bba5e92b7")
+#ENTITY_ID = os.getenv("ENTITY_ID", "vulnerability--0dda0210-8681-5f3a-b881-890bba5e92b7")
 
 
 MODE = os.getenv("MODE", "full")  # full / simple

@@ -1,52 +1,62 @@
+from __future__ import annotations
+
 import os
-import sys
 import subprocess
+import sys
 from pathlib import Path
+from typing import Dict, Iterable, Tuple
+
 from dotenv import load_dotenv
 
-# Načti .env
 load_dotenv()
 
-# Root projektu (adresář, kde leží tento middleware)
 BASE_DIR = Path(__file__).resolve().parent
 
-# Skripty
-SCRIPTS_DIR = BASE_DIR  # nebo BASE_DIR / "middleware_to_neo"
-
-# Seznam kroků (sekvenčně)
-PIPELINE = [
-    ("OpenVAS -> Neo4j",            SCRIPTS_DIR / "OpenVas_To_NEO.py"),
-    ("MITRE ATT&CK Patterns -> Neo4j", SCRIPTS_DIR / "Mitre_Attack_Pattern_To_NEO.py"),
-    ("MITRE Groups -> Neo4j",       SCRIPTS_DIR / "Mitre_Groups_to_Neo.py"),
-    ("MITRE Software -> Neo4j",     SCRIPTS_DIR / "Mitre_SW_to_Neo.py"),
+PIPELINE: Iterable[Tuple[str, Path]] = [
+    ("OpenVAS -> Neo4j", BASE_DIR / "OpenVas_To_NEO.py"),
+    ("CTI (CVE enrichment) -> Neo4j", BASE_DIR / "CVE_To_Neo.py"),
+    ("IntrusionSet TARGETS Location -> Neo4j", BASE_DIR / "Intrusionset_targets_location_TONEO.py"),
+    ("IntrusionSet USES Malware -> Neo4j", BASE_DIR / "Intrusionset_uses_malware_TONEO.py"),
+    ("IntrusionSet USES AttackPattern -> Neo4j", BASE_DIR / "Intrusionset_uses_AttackPattern_TONEO.py"),
 ]
 
-def run_step(name: str, script_path: Path, extra_env: dict | None = None) -> None:
-    """
-    Spustí jeden python skript a BLOKUJE (čeká), dokud neskončí.
-    Při chybě vyhodí RuntimeError.
-    """
+
+def _build_common_env() -> Dict[str, str]:
+    env = os.environ.copy()
+    for key in [
+        "NEO4J_URI",
+        "NEO4J_USER",
+        "NEO4J_PASS",
+        "NEO4J_DB",
+        "OPENCTI_URL",
+        "OPENCTI_TOKEN",
+        "MODE",
+        "CVE_LIST",
+        "OPENCTI_PAGE_SIZE",
+    ]:
+        value = os.getenv(key)
+        if value is not None:
+            env[key] = value
+    return env
+
+
+def run_step(name: str, script_path: Path, env: Dict[str, str]) -> None:
     if not script_path.exists():
         raise FileNotFoundError(f"[{name}] Script not found: {script_path}")
 
-    env = os.environ.copy()
-    if extra_env:
-        env.update({k: str(v) for k, v in extra_env.items()})
-
-    py = sys.executable  # stejný python/venv
+    py = sys.executable
     print(f"\n=== STEP: {name} ===")
     print(f"RUN: {py} {script_path}")
 
     completed = subprocess.run(
         [py, str(script_path)],
         env=env,
-        cwd=str(SCRIPTS_DIR),   # pracovní adresář, aby seděly relativní cesty
+        cwd=str(BASE_DIR),
         capture_output=True,
         text=True,
-        check=False
+        check=False,
     )
 
-    # Logy
     if completed.stdout:
         print(f"[{name}] STDOUT:\n{completed.stdout}")
     if completed.stderr:
@@ -57,19 +67,14 @@ def run_step(name: str, script_path: Path, extra_env: dict | None = None) -> Non
 
     print(f"=== OK: {name} ===")
 
-def main():
-    # Volitelné: můžeš poslat všem krokům stejné env proměnné
-    common_env = {
-        "NEO4J_URI": os.getenv("NEO4J_URI"),
-        "NEO4J_USER": os.getenv("NEO4J_USER"),
-        "NEO4J_PASS": os.getenv("NEO4J_PASS"),
-        "NEO4J_DB": os.getenv("NEO4J_DB"),
-    }
 
+def main() -> None:
+    env = _build_common_env()
     for name, script in PIPELINE:
-        run_step(name, script, extra_env=common_env)
+        run_step(name, script, env)
 
-    print("\n Pipeline hotová: všechny skripty doběhly úspěšně.")
+    print("\n[PIPELINE OK] Všechny kroky doběhly úspěšně.")
+
 
 if __name__ == "__main__":
     main()
