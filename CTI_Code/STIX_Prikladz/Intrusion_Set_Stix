@@ -30,6 +30,26 @@
         "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"
       ]
     },
+        {
+      "id": "relationship--80a26519-3517-5c26-8c12-90f525dd0223",
+      "spec_version": "2.1",
+      "relationship_type": "targets",
+      "revoked": false,
+      "confidence": 100,
+      "lang": "en",
+      "created": "2026-02-13T18:51:59.920Z",
+      "modified": "2026-02-14T12:53:34.061Z",
+      "x_opencti_id": "bd3beca6-50e7-4d1b-b018-6905a0762b58",
+      "x_opencti_type": "targets",
+      "type": "relationship",
+      "created_by_ref": "identity--e52b2fa3-2af0-5e53-ad38-17d54b3d61cb",
+      "object_marking_refs": [
+        "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"
+      ],
+      "source_ref": "intrusion-set--19455633-8cab-56f5-9080-19988fc71f2f",
+      "target_ref": "location--5c26fa61-1bce-5286-900c-9ac7d4d93276"
+    },
+
     {
       "id": "attack-pattern--85520f53-08e8-5683-8e9b-b4d7a7ffe3dc",
       "spec_version": "2.1",

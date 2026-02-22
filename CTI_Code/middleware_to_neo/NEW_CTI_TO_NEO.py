@@ -29,6 +29,9 @@ SOURCE_TYPES = {"attack-pattern", "malware", "intrusion-set"}
 
 client = OpenCTIApiClient(OPENCTI_URL, OPENCTI_TOKEN)
 
+
+CVE_LIST= ["CVE-2023-46805"]
+
 def index_bundle_objects(bundle: dict) -> dict:
     idx = {}
     for obj in bundle.get("objects", []):
@@ -161,8 +164,11 @@ def link_cti_to_cve_by_name(tx, src_label: str, src_stix_id: str, rel_type: str,
     )
 
 def main():
-    cve_list = os.getenv("CVE_LIST", "")
-    cve_names = [c.strip().upper() for c in cve_list.split(",") if c.strip()]
+
+
+    #cve_list = os.getenv("CVE_LIST", "")
+    #cve_names = [c.strip().upper() for c in cve_list.split(",") if c.strip()]
+    cve_names= CVE_LIST
     if not cve_names:
         print("[SKIP] CVE_LIST is empty, nothing to enrich.")
         return
