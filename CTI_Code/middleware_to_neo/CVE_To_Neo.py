@@ -30,7 +30,7 @@ SOURCE_TYPES = {"attack-pattern", "malware", "intrusion-set"}
 client = OpenCTIApiClient(OPENCTI_URL, OPENCTI_TOKEN)
 
 
-CVE_LIST= ["CVE-2021-44288"]
+#CVE_LIST= ["CVE-2021-44288"]
 
 def index_bundle_objects(bundle: dict) -> dict:
     idx = {}

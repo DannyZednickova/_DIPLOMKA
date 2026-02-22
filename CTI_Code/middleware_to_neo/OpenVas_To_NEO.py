@@ -33,7 +33,7 @@ OPENVAS_XML_PATH = Path(os.getenv("OPENVAS_XML_PATH", ""))
 
 # --- CTI trigger config ---
 CTI_ENABLE = os.getenv("CTI_ENABLE", "1") == "1"
-CTI_SCRIPT_PATH = Path(os.getenv("CTI_SCRIPT_PATH", "NEW_CTI_TO_NEO.py"))  # cesta k NEW_CTI_TO_NEO.py
+CTI_SCRIPT_PATH = Path(os.getenv("CTI_SCRIPT_PATH", "CVE_To_Neo.py"))  # cesta k CVE_To_Neo.py
 CTI_MAX_CVES = int(os.getenv("CTI_MAX_CVES", "900"))
 
 # předáš CTI skriptu i tyhle parametry, pokud je používá
@@ -200,7 +200,7 @@ def parse_openvas(xml_path: Path) -> List[Row]:
 def ensure_schema(session) -> None:
     """
     Bez názvů + bezpečné: Host.ip, NVT.oid, Vulnerability.name
-    (Žádné CTI constrainty tady! To ať řeší NEW_CTI_TO_NEO.py v jeho DB.)
+    (Žádné CTI constrainty tady! To ať řeší CVE_To_Neo.py v jeho DB.)
     """
     session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (h:Host) REQUIRE h.ip IS UNIQUE")
     session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (n:NVT) REQUIRE n.oid IS UNIQUE")
@@ -310,7 +310,7 @@ def import_openvas_to_neo4j(rows: List[Row]) -> List[str]:
 
 
 # ----------------------------
-# CTI trigger: zavolá NEW_CTI_TO_NEO.py
+# CTI trigger: zavolá CVE_To_Neo.py
 # ----------------------------
 def trigger_new_cti_to_neo(cves: List[str]) -> None:
     if not CTI_ENABLE:
@@ -373,7 +373,7 @@ def main() -> None:
     cves = import_openvas_to_neo4j(rows)
     print(f"[OPENVAS->NEO4J] unique CVEs={len(cves)}")
 
-    # ✅ tady se volá NEW_CTI_TO_NEO.py (a NIC jiného CTI se tu nedělá)
+    # ✅ tady se volá CVE_To_Neo.py (a NIC jiného CTI se tu nedělá)
     trigger_new_cti_to_neo(cves)
 
     print("[OK] done.")
