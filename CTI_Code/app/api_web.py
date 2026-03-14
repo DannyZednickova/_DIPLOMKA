@@ -334,6 +334,7 @@ def list_attack_patterns(limit: int = 900):
         return {"results": []}
 
 
+
 @app.get("/api/list/locations")
 def list_locations(limit: int = 900):
     q = """
