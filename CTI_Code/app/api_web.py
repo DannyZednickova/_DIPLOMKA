@@ -147,7 +147,6 @@ def _shutdown():
 
 
 
-
 def build_highlight_path(nodes, edges, start_id, max_hops=6):
     node_labels = {n["id"]: set(n.get("labels") or []) for n in nodes}
     hosts = {nid for nid, lbs in node_labels.items() if "Host" in lbs}
