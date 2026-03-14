@@ -1,13 +1,12 @@
 import os
 from pathlib import Path
-from typing import List, Dict, Set
+from typing import Dict
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from neo4j import GraphDatabase
-from neo4j.exceptions import Neo4jError
 
 load_dotenv()
 
@@ -23,21 +22,13 @@ INDEX_HTML = STATIC_DIR / "index.html"
 app = FastAPI(title="CTI Graph UI")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-# Kratší timeouty => API se nezasekne na desítky sekund při problému s DB
-driver = GraphDatabase.driver(
-    NEO4J_URI,
-    auth=(NEO4J_USER, NEO4J_PASS),
-    connection_timeout=5,
-    max_connection_pool_size=30,
-)
+driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
 
 
 def run(query: str, **params):
     try:
         with driver.session(database=NEO4J_DB) as session:
             return list(session.run(query, **params))
-    except Neo4jError as exc:
-        raise HTTPException(status_code=500, detail=f"Neo4j error: {str(exc)}") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -52,13 +43,7 @@ def _shutdown():
 
 @app.get("/")
 def index():
-    # Hlavní stránka
     return FileResponse(str(INDEX_HTML))
-
-
-@app.get("/api/health")
-def health():
-    return {"ok": True}
 
 
 @app.get("/api/node")
@@ -79,6 +64,7 @@ def node_details(id: str, neigh_limit: int = 80):
            other_title: coalesce(m.name, m.cve, m.ip, m.oid, "unknown"),
            other_labels: labels(m)
          })[0..$neigh_limit] AS neighbors
+
     RETURN {
       id: coalesce(n.opencti_id, n.cve, n.ip, n.oid, elementId(n)),
       labels: labels(n),
@@ -94,98 +80,111 @@ def node_details(id: str, neigh_limit: int = 80):
     return out[0].data()["node"]
 
 
-def _online_fulltext_indexes() -> Set[str]:
-    q = """
-    SHOW FULLTEXT INDEXES
-    YIELD name, state
-    WHERE state = 'ONLINE'
-    RETURN collect(name) AS names
-    """
-    rows = run(q)
-    if not rows:
-        return set()
-    return set(rows[0].data().get("names") or [])
-
-
-def _query_fulltext(index_name: str, q: str, limit: int):
-    cypher = f"""
-    CALL db.index.fulltext.queryNodes('{index_name}', $q) YIELD node, score
-    RETURN
-      coalesce(node.opencti_id, node.cve, node.ip, node.oid, elementId(node)) AS id,
-      labels(node) AS labels,
-      coalesce(node.name, node.cve, node.ip, node.oid, 'unknown') AS title,
-      node.entity_type AS entity_type,
-      score
-    ORDER BY score DESC
-    LIMIT $limit
-    """
-    return run(cypher, q=q, limit=limit)
-
-
 @app.get("/api/search")
 def search(q: str = Query(..., min_length=2), limit: int = 40):
-    # Podporované indexy (vezme jen ty ONLINE)
-    preferred = [
+    text = q.strip()
+
+    idx_rows = run(
+        """
+        SHOW FULLTEXT INDEXES
+        YIELD name, state
+        WHERE state='ONLINE'
+        RETURN collect(name) AS names
+        """
+    )
+    online_indexes = set((idx_rows[0].data().get("names") or []) if idx_rows else [])
+
+    wanted = [
         "stix_fulltext",
         "vuln_fulltext",
         "host_fulltext",
         "nvt_fulltext",
         "attackpattern_fulltext",
+        "malware_fulltext",
+        "location_fulltext",
         "mitre_intrusionset_fulltext",
         "intrusionset_fulltext",
     ]
-
-    try:
-        online = _online_fulltext_indexes()
-    except HTTPException:
-        # Když DB/indexy zrovna nedostupné, neblokuj frontend
-        return {"results": [], "used_indexes": []}
-
-    active = [x for x in preferred if x in online]
-    if not active:
-        return {"results": [], "used_indexes": []}
-
-    variants = [q.strip()]
-    # Prefix varianta pro partial match
-    if "*" not in q and '"' not in q:
-        variants.append(f"{q.strip()}*")
+    active = [x for x in wanted if x in online_indexes]
 
     merged: Dict[str, dict] = {}
-    for idx in active:
-        for qv in variants:
-            try:
-                rows = _query_fulltext(idx, qv, limit)
-            except HTTPException:
-                continue
-            for r in rows:
-                d = r.data()
-                rid = d["id"]
-                prev = merged.get(rid)
-                if (prev is None) or (float(d.get("score", 0)) > float(prev.get("score", 0))):
-                    merged[rid] = d
 
-    results = sorted(merged.values(), key=lambda x: float(x.get("score", 0)), reverse=True)[:limit]
-    return {"results": results, "used_indexes": active}
+    def merge_rows(rows):
+        for r in rows:
+            d = r.data()
+            rid = d.get("id")
+            if not rid:
+                continue
+            prev = merged.get(rid)
+            if prev is None or float(d.get("score", 0)) > float(prev.get("score", 0)):
+                merged[rid] = d
+
+    for idx in active:
+        for variant in [text, f"{text}*"]:
+            cypher = f"""
+            CALL db.index.fulltext.queryNodes('{idx}', $q) YIELD node, score
+            RETURN
+              coalesce(node.opencti_id, node.cve, node.ip, node.oid, elementId(node)) AS id,
+              labels(node) AS labels,
+              coalesce(node.name, node.cve, node.ip, node.oid, 'unknown') AS title,
+              node.entity_type AS entity_type,
+              score
+            ORDER BY score DESC
+            LIMIT $limit
+            """
+            try:
+                merge_rows(run(cypher, q=variant, limit=limit))
+            except HTTPException:
+                pass
+
+    fallback = """
+    MATCH (n)
+    WHERE
+      (n.cve IS NOT NULL AND toLower(n.cve) CONTAINS toLower($q)) OR
+      (n.ip IS NOT NULL AND toLower(n.ip) CONTAINS toLower($q)) OR
+      (n.oid IS NOT NULL AND toLower(n.oid) CONTAINS toLower($q)) OR
+      (n.name IS NOT NULL AND toLower(n.name) CONTAINS toLower($q)) OR
+      (n.entity_type IS NOT NULL AND toLower(n.entity_type) CONTAINS toLower($q))
+    RETURN
+      coalesce(n.opencti_id, n.cve, n.ip, n.oid, elementId(n)) AS id,
+      labels(n) AS labels,
+      coalesce(n.name, n.cve, n.ip, n.oid, 'unknown') AS title,
+      n.entity_type AS entity_type,
+      CASE
+        WHEN n.cve = $q THEN 100.0
+        WHEN n.name = $q THEN 90.0
+        WHEN n.cve STARTS WITH $q THEN 80.0
+        ELSE 10.0
+      END AS score
+    ORDER BY score DESC, title ASC
+    LIMIT $limit
+    """
+    try:
+        merge_rows(run(fallback, q=text, limit=limit))
+    except HTTPException:
+        pass
+
+    out = sorted(merged.values(), key=lambda x: float(x.get("score", 0)), reverse=True)[:limit]
+    return {"results": out, "used_indexes": active}
 
 
 @app.get("/api/graph")
 def graph(
     node_id: str,
-    hops: int = 1,          # nižší default => rychlejší start
-    max_nodes: int = 350,   # nižší default => méně freeze
-    max_edges: int = 1200,
+    hops: int = 2,
+    max_nodes: int = 1200,
+    max_edges: int = 0,
 ):
-    # tvrdé limity proti zaseknutí
-    if hops < 0 or hops > 3:
-        raise HTTPException(status_code=400, detail="hops must be in range 0..3")
-    if max_nodes < 50 or max_nodes > 1200:
-        raise HTTPException(status_code=400, detail="max_nodes must be in range 50..1200")
-    if max_edges < 100 or max_edges > 5000:
-        raise HTTPException(status_code=400, detail="max_edges must be in range 100..5000")
+    if hops < 0 or hops > 8:
+        raise HTTPException(status_code=400, detail="hops must be in range 0..8")
+    if max_nodes < 50 or max_nodes > 6000:
+        raise HTTPException(status_code=400, detail="max_nodes must be in range 50..6000")
+
+    if max_edges <= 0:
+        max_edges = min(max_nodes * 12, 25000)
 
     hops_int = int(hops)
 
-    # Pozn.: Neo4j neumí [*0..$hops], proto placeholder replace
     cypher = """
     MATCH (start)
     WHERE start.opencti_id = $node_id
@@ -199,8 +198,9 @@ def graph(
     CALL {
       WITH start
       MATCH p=(start)-[*0..__HOPS__]-(n)
-      UNWIND nodes(p) AS nn
-      RETURN collect(DISTINCT nn)[0..$max_nodes] AS ns
+      WITH n, min(length(p)) AS dist
+      ORDER BY dist ASC
+      RETURN collect(n)[0..$max_nodes] AS ns
     }
 
     CALL {
@@ -241,33 +241,27 @@ def list_hosts(limit: int = 500):
     ORDER BY title
     LIMIT $limit
     """
-    try:
-        rows = run(q, limit=limit)
-        return {"results": [r.data() for r in rows]}
-    except HTTPException:
-        return {"results": []}
+    rows = run(q, limit=limit)
+    return {"results": [r.data() for r in rows]}
 
 
 @app.get("/api/list/cves")
-def list_cves(limit: int = 1000):
+def list_cves(limit: int = 4000):
     q = """
-    MATCH (v:Vulnerability)
+    MATCH (v)
     WHERE v.cve IS NOT NULL
-    RETURN v.cve AS id,
+    RETURN DISTINCT v.cve AS id,
            v.cve AS title,
            labels(v) AS labels
     ORDER BY title
     LIMIT $limit
     """
-    try:
-        rows = run(q, limit=limit)
-        return {"results": [r.data() for r in rows]}
-    except HTTPException:
-        return {"results": []}
+    rows = run(q, limit=limit)
+    return {"results": [r.data() for r in rows]}
 
 
 @app.get("/api/list/nvts")
-def list_nvts(limit: int = 900):
+def list_nvts(limit: int = 1200):
     q = """
     MATCH (n:NVT)
     RETURN coalesce(n.oid, elementId(n)) AS id,
@@ -276,15 +270,12 @@ def list_nvts(limit: int = 900):
     ORDER BY title
     LIMIT $limit
     """
-    try:
-        rows = run(q, limit=limit)
-        return {"results": [r.data() for r in rows]}
-    except HTTPException:
-        return {"results": []}
+    rows = run(q, limit=limit)
+    return {"results": [r.data() for r in rows]}
 
 
 @app.get("/api/list/malware")
-def list_malware(limit: int = 900):
+def list_malware(limit: int = 1200):
     q = """
     MATCH (m:Malware)
     RETURN coalesce(m.opencti_id, elementId(m)) AS id,
@@ -293,15 +284,12 @@ def list_malware(limit: int = 900):
     ORDER BY title
     LIMIT $limit
     """
-    try:
-        rows = run(q, limit=limit)
-        return {"results": [r.data() for r in rows]}
-    except HTTPException:
-        return {"results": []}
+    rows = run(q, limit=limit)
+    return {"results": [r.data() for r in rows]}
 
 
 @app.get("/api/list/intrusion-sets")
-def list_intrusion_sets(limit: int = 900):
+def list_intrusion_sets(limit: int = 1200):
     q = """
     MATCH (i:IntrusionSet)
     RETURN coalesce(i.opencti_id, elementId(i)) AS id,
@@ -310,15 +298,12 @@ def list_intrusion_sets(limit: int = 900):
     ORDER BY title
     LIMIT $limit
     """
-    try:
-        rows = run(q, limit=limit)
-        return {"results": [r.data() for r in rows]}
-    except HTTPException:
-        return {"results": []}
+    rows = run(q, limit=limit)
+    return {"results": [r.data() for r in rows]}
 
 
 @app.get("/api/list/attack-patterns")
-def list_attack_patterns(limit: int = 900):
+def list_attack_patterns(limit: int = 1200):
     q = """
     MATCH (a:AttackPattern)
     RETURN coalesce(a.opencti_id, elementId(a)) AS id,
@@ -327,16 +312,12 @@ def list_attack_patterns(limit: int = 900):
     ORDER BY title
     LIMIT $limit
     """
-    try:
-        rows = run(q, limit=limit)
-        return {"results": [r.data() for r in rows]}
-    except HTTPException:
-        return {"results": []}
-
+    rows = run(q, limit=limit)
+    return {"results": [r.data() for r in rows]}
 
 
 @app.get("/api/list/locations")
-def list_locations(limit: int = 900):
+def list_locations(limit: int = 1200):
     q = """
     MATCH (l:Location)
     RETURN coalesce(l.opencti_id, elementId(l)) AS id,
@@ -345,8 +326,5 @@ def list_locations(limit: int = 900):
     ORDER BY title
     LIMIT $limit
     """
-    try:
-        rows = run(q, limit=limit)
-        return {"results": [r.data() for r in rows]}
-    except HTTPException:
-        return {"results": []}
+    rows = run(q, limit=limit)
+    return {"results": [r.data() for r in rows]}

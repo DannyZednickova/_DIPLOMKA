@@ -7,7 +7,7 @@ let currentNodeId = null;
 
 const LIST_ENDPOINTS = {
   hosts: "/api/list/hosts?limit=500",
-  cves: "/api/list/cves?limit=900",
+  cves: "/api/list/cves?limit=3000",
   nvts: "/api/list/nvts?limit=900",
   malware: "/api/list/malware?limit=900",
   intrusion: "/api/list/intrusion-sets?limit=900",
@@ -82,14 +82,14 @@ function drawGraph(data) {
     return;
   }
 
-  const gLinks = svg.append("g").attr("stroke", "#b2b7c2").attr("stroke-opacity", 0.45);
+  const gLinks = svg.append("g").attr("stroke", "#8f97a8").attr("stroke-opacity", 0.7);
   const gNodes = svg.append("g");
   const gLabels = svg.append("g");
 
   const link = gLinks.selectAll("line")
     .data(links)
     .join("line")
-    .attr("stroke-width", 1);
+    .attr("stroke-width", 1.2);
 
   const node = gNodes.selectAll("circle")
     .data(nodes)
@@ -198,9 +198,10 @@ async function loadGraph(nodeId) {
   try {
     const hops = Number(document.getElementById("hops").value || 2);
     const maxNodes = Number(document.getElementById("maxNodes").value || 1200);
+    const maxEdges = Math.min(Math.max(maxNodes * 12, 1200), 25000);
 
     currentNodeId = nodeId;
-    const url = `/api/graph?node_id=${encodeURIComponent(nodeId)}&hops=${hops}&max_nodes=${maxNodes}`;
+    const url = `/api/graph?node_id=${encodeURIComponent(nodeId)}&hops=${hops}&max_nodes=${maxNodes}&max_edges=${maxEdges}`;
     const data = await apiJson(url);
     drawGraph(data);
   } catch (err) {
