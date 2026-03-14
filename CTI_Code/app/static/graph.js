@@ -7,7 +7,7 @@ let currentNodeId = null;
 
 const LIST_ENDPOINTS = {
   hosts: "/api/list/hosts?limit=500",
-  cves: "/api/list/cves?limit=3000",
+  cves: "/api/list/cves?limit=5000",
   nvts: "/api/list/nvts?limit=900",
   malware: "/api/list/malware?limit=900",
   intrusion: "/api/list/intrusion-sets?limit=900",

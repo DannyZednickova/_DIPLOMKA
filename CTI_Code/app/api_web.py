@@ -119,8 +119,10 @@ def search(q: str = Query(..., min_length=2), limit: int = 40):
             if prev is None or float(d.get("score", 0)) > float(prev.get("score", 0)):
                 merged[rid] = d
 
+    variants = [text, f"{text}*"]
+
     for idx in active:
-        for variant in [text, f"{text}*"]:
+        for variant in variants:
             cypher = f"""
             CALL db.index.fulltext.queryNodes('{idx}', $q) YIELD node, score
             RETURN
@@ -137,6 +139,7 @@ def search(q: str = Query(..., min_length=2), limit: int = 40):
             except HTTPException:
                 pass
 
+    # fallback: pokryje i Location/Malware i bez fulltext indexů
     fallback = """
     MATCH (n)
     WHERE
@@ -150,17 +153,23 @@ def search(q: str = Query(..., min_length=2), limit: int = 40):
       labels(n) AS labels,
       coalesce(n.name, n.cve, n.ip, n.oid, 'unknown') AS title,
       n.entity_type AS entity_type,
-      CASE
-        WHEN n.cve = $q THEN 100.0
-        WHEN n.name = $q THEN 90.0
-        WHEN n.cve STARTS WITH $q THEN 80.0
-        ELSE 10.0
-      END AS score
+      (
+        CASE
+          WHEN n.cve = $q THEN 500.0
+          WHEN n.name = $q THEN 450.0
+          WHEN n.cve STARTS WITH $q THEN 400.0
+          WHEN toLower(n.name) STARTS WITH toLower($q) THEN 250.0
+          ELSE 60.0
+        END
+        + CASE WHEN 'Location' IN labels(n) THEN 40.0 ELSE 0.0 END
+        + CASE WHEN 'Malware' IN labels(n) THEN 30.0 ELSE 0.0 END
+        + CASE WHEN 'Vulnerability' IN labels(n) THEN 20.0 ELSE 0.0 END
+      ) AS score
     ORDER BY score DESC, title ASC
     LIMIT $limit
     """
     try:
-        merge_rows(run(fallback, q=text, limit=limit))
+        merge_rows(run(fallback, q=text, limit=limit * 3))
     except HTTPException:
         pass
 
@@ -246,13 +255,21 @@ def list_hosts(limit: int = 500):
 
 
 @app.get("/api/list/cves")
-def list_cves(limit: int = 4000):
+def list_cves(limit: int = 5000):
     q = """
-    MATCH (v)
-    WHERE v.cve IS NOT NULL
-    RETURN DISTINCT v.cve AS id,
-           v.cve AS title,
-           labels(v) AS labels
+    MATCH (n)
+    WITH n,
+         coalesce(
+           n.cve,
+           CASE
+             WHEN n.name IS NOT NULL AND n.name =~ '(?i)^CVE-[0-9]{4}-[0-9].*' THEN n.name
+             ELSE null
+           END
+         ) AS cve
+    WHERE cve IS NOT NULL
+    RETURN DISTINCT cve AS id,
+           cve AS title,
+           labels(n) AS labels
     ORDER BY title
     LIMIT $limit
     """
