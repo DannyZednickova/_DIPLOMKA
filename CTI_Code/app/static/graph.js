@@ -4,6 +4,7 @@ const height = () => document.getElementById("graph").clientHeight;
 
 let sim = null;
 let currentNodeId = null;
+let currentSelectionKind = null;
 
 const LIST_ENDPOINTS = {
   hosts: "/api/list/hosts?limit=500",
@@ -108,39 +109,75 @@ function nodeLooksLikeCve(node) {
   return hasAnyLabel(node, ["CVE", "Vulnerability"]) || looksLikeCve(node.id) || looksLikeCve(node.title);
 }
 
-function filterGraphForCvePath(rawData, selectedNodeId, hops) {
-  // Pokud je zvolené CVE a hops > 1, omezíme graf jen na "čistou" CTI cestu:
+function nodeLooksLikeNvt(node) {
+  if (!node) return false;
+  return hasAnyLabel(node, ["NVT"]);
+}
+
+function resolveAnchorIds(nodes, selectedNodeId, mode) {
+  const selectedNorm = String(selectedNodeId || "").trim().toUpperCase();
+  const out = new Set();
+
+  for (const node of nodes) {
+    const byMode = mode === "cve" ? nodeLooksLikeCve(node) : nodeLooksLikeNvt(node);
+    if (!byMode) continue;
+
+    const nid = String(node.id || "").toUpperCase();
+    const ntitle = String(node.title || "").toUpperCase();
+    if (
+      nid === selectedNorm ||
+      ntitle === selectedNorm ||
+      nid.startsWith(selectedNorm) ||
+      ntitle.startsWith(selectedNorm)
+    ) {
+      out.add(node.id);
+    }
+  }
+
+  return out;
+}
+
+function filterGraphForFocusedPath(rawData, selectedNodeId, hops, selectionKind) {
+  // Pro CVE/NVT výběr omezíme graf jen na "čistou" CTI cestu:
   // Host -> CVE -> NVT -> (IntrusionSet|Malware) -> (AttackPattern|Location)
   if (hops <= 1) return rawData;
-  if (!looksLikeCve(selectedNodeId)) return rawData;
 
   const nodes = rawData?.nodes || [];
   const edges = rawData?.edges || [];
   const nodesById = new Map(nodes.map(n => [n.id, n]));
+  const adj = buildAdjacency(edges);
   const selected = nodesById.get(selectedNodeId);
 
-  const adj = buildAdjacency(edges);
-  const cveAnchors = new Set();
-  const selectedNorm = String(selectedNodeId || "").trim().toUpperCase();
+  const isCveMode =
+    selectionKind === "cves" ||
+    selectionKind === "cve" ||
+    looksLikeCve(selectedNodeId) ||
+    nodeLooksLikeCve(selected);
+  const isNvtMode =
+    selectionKind === "nvts" ||
+    selectionKind === "nvt" ||
+    nodeLooksLikeNvt(selected);
 
-  if (selected && nodeLooksLikeCve(selected)) cveAnchors.add(selected.id);
+  if (!isCveMode && !isNvtMode) return rawData;
 
-  for (const node of nodes) {
-    if (!nodeLooksLikeCve(node)) continue;
-    const nid = String(node.id || "").toUpperCase();
-    const ntitle = String(node.title || "").toUpperCase();
-    if (nid === selectedNorm || ntitle === selectedNorm || nid.startsWith(selectedNorm) || ntitle.startsWith(selectedNorm)) {
-      cveAnchors.add(node.id);
-    }
-  }
+  const cveAnchors = isCveMode ? resolveAnchorIds(nodes, selectedNodeId, "cve") : new Set();
+  const nvtAnchors = isNvtMode ? resolveAnchorIds(nodes, selectedNodeId, "nvt") : new Set();
 
-  if (!cveAnchors.size) return rawData;
-  const keep = new Set([...cveAnchors]);
+  if (!cveAnchors.size && !nvtAnchors.size) return rawData;
 
-  const hostIds = collectNeighborsByLabel(adj, nodesById, cveAnchors, ["Host"]);
-  const nvtIds = collectNeighborsByLabel(adj, nodesById, cveAnchors, ["NVT"]);
+  // doplnění druhé strany triády (CVE <-> NVT)
+  const cveFromNvt = collectNeighborsByLabel(adj, nodesById, nvtAnchors, ["CVE", "Vulnerability"]);
+  const nvtFromCve = collectNeighborsByLabel(adj, nodesById, cveAnchors, ["NVT"]);
+  const cveIds = new Set([...cveAnchors, ...cveFromNvt]);
+  const nvtIds = new Set([...nvtAnchors, ...nvtFromCve]);
 
-  const ctiSeed = new Set([...cveAnchors, ...nvtIds]);
+  // hosty bereme z obou stran (z NVT i z CVE)
+  const hostFromCve = collectNeighborsByLabel(adj, nodesById, cveIds, ["Host"]);
+  const hostFromNvt = collectNeighborsByLabel(adj, nodesById, nvtIds, ["Host"]);
+  const hostIds = new Set([...hostFromCve, ...hostFromNvt]);
+
+  const keep = new Set([...cveIds, ...nvtIds, ...hostIds]);
+  const ctiSeed = new Set([...cveIds, ...nvtIds]);
   const intrusionIds = collectNeighborsByLabel(adj, nodesById, ctiSeed, ["IntrusionSet"]);
   const malwareIds = collectNeighborsByLabel(adj, nodesById, ctiSeed, ["Malware"]);
   const actorIds = new Set([...intrusionIds, ...malwareIds]);
@@ -148,8 +185,6 @@ function filterGraphForCvePath(rawData, selectedNodeId, hops) {
   const locationIds = collectNeighborsByLabel(adj, nodesById, actorIds, ["Location"]);
 
   [
-    hostIds,
-    nvtIds,
     intrusionIds,
     malwareIds,
     attackIds,
@@ -161,7 +196,7 @@ function filterGraphForCvePath(rawData, selectedNodeId, hops) {
   const inSet = (setRef, id) => setRef.has(id);
   const isAllowedEdge = (a, b) => {
     const inHost = inSet(hostIds, a) || inSet(hostIds, b);
-    const inCve = inSet(cveAnchors, a) || inSet(cveAnchors, b);
+    const inCve = inSet(cveIds, a) || inSet(cveIds, b);
     const inNvt = inSet(nvtIds, a) || inSet(nvtIds, b);
     const inIntr = inSet(intrusionIds, a) || inSet(intrusionIds, b);
     const inMal = inSet(malwareIds, a) || inSet(malwareIds, b);
@@ -303,7 +338,10 @@ function renderResults(results) {
     const div = document.createElement("div");
     div.className = "item";
     div.textContent = `${r.title} [${(r.labels || []).join(", ")}] score=${Number(r.score || 0).toFixed(2)}`;
-    div.onclick = () => loadGraph(r.id);
+    div.onclick = () => {
+      currentSelectionKind = null;
+      loadGraph(r.id);
+    };
     el.appendChild(div);
   }
 }
@@ -328,7 +366,7 @@ async function loadGraph(nodeId) {
     currentNodeId = nodeId;
     const url = `/api/graph?node_id=${encodeURIComponent(nodeId)}&hops=${hops}&max_nodes=${maxNodes}&max_edges=${maxEdges}`;
     const data = await apiJson(url);
-    const filtered = filterGraphForCvePath(data, nodeId, hops);
+    const filtered = filterGraphForFocusedPath(data, nodeId, hops, currentSelectionKind);
     drawGraph(filtered);
   } catch (err) {
     alert(err.message);
@@ -344,7 +382,10 @@ function renderList(kind, items) {
     const div = document.createElement("div");
     div.className = "item";
     div.textContent = item.title;
-    div.onclick = () => loadGraph(item.id);
+    div.onclick = () => {
+      currentSelectionKind = kind;
+      loadGraph(item.id);
+    };
     el.appendChild(div);
   }
 }
