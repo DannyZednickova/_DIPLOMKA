@@ -67,6 +67,131 @@ async function apiJson(url) {
   return await res.json();
 }
 
+function hasAnyLabel(node, labels) {
+  const nodeLabels = node?.labels || [];
+  return labels.some(label => nodeLabels.includes(label));
+}
+
+function buildAdjacency(edges) {
+  const adj = new Map();
+  const push = (a, b, edge) => {
+    if (!adj.has(a)) adj.set(a, []);
+    adj.get(a).push({ otherId: b, edge });
+  };
+
+  for (const edge of edges || []) {
+    if (!edge?.source || !edge?.target) continue;
+    push(edge.source, edge.target, edge);
+    push(edge.target, edge.source, edge);
+  }
+  return adj;
+}
+
+function collectNeighborsByLabel(adj, nodesById, sourceIds, labels) {
+  const out = new Set();
+  for (const sourceId of sourceIds) {
+    const neigh = adj.get(sourceId) || [];
+    for (const n of neigh) {
+      const node = nodesById.get(n.otherId);
+      if (node && hasAnyLabel(node, labels)) out.add(node.id);
+    }
+  }
+  return out;
+}
+
+function looksLikeCve(value) {
+  return /^CVE-\d{4}-\d+/i.test(String(value || "").trim());
+}
+
+function nodeLooksLikeCve(node) {
+  if (!node) return false;
+  return hasAnyLabel(node, ["CVE", "Vulnerability"]) || looksLikeCve(node.id) || looksLikeCve(node.title);
+}
+
+function filterGraphForCvePath(rawData, selectedNodeId, hops) {
+  // Pokud je zvolené CVE a hops > 1, omezíme graf jen na "čistou" CTI cestu:
+  // Host -> CVE -> NVT -> (IntrusionSet|Malware) -> (AttackPattern|Location)
+  if (hops <= 1) return rawData;
+  if (!looksLikeCve(selectedNodeId)) return rawData;
+
+  const nodes = rawData?.nodes || [];
+  const edges = rawData?.edges || [];
+  const nodesById = new Map(nodes.map(n => [n.id, n]));
+  const selected = nodesById.get(selectedNodeId);
+
+  const adj = buildAdjacency(edges);
+  const cveAnchors = new Set();
+  const selectedNorm = String(selectedNodeId || "").trim().toUpperCase();
+
+  if (selected && nodeLooksLikeCve(selected)) cveAnchors.add(selected.id);
+
+  for (const node of nodes) {
+    if (!nodeLooksLikeCve(node)) continue;
+    const nid = String(node.id || "").toUpperCase();
+    const ntitle = String(node.title || "").toUpperCase();
+    if (nid === selectedNorm || ntitle === selectedNorm || nid.startsWith(selectedNorm) || ntitle.startsWith(selectedNorm)) {
+      cveAnchors.add(node.id);
+    }
+  }
+
+  if (!cveAnchors.size) return rawData;
+  const keep = new Set([...cveAnchors]);
+
+  const hostIds = collectNeighborsByLabel(adj, nodesById, cveAnchors, ["Host"]);
+  const nvtIds = collectNeighborsByLabel(adj, nodesById, cveAnchors, ["NVT"]);
+
+  const ctiSeed = new Set([...cveAnchors, ...nvtIds]);
+  const intrusionIds = collectNeighborsByLabel(adj, nodesById, ctiSeed, ["IntrusionSet"]);
+  const malwareIds = collectNeighborsByLabel(adj, nodesById, ctiSeed, ["Malware"]);
+  const actorIds = new Set([...intrusionIds, ...malwareIds]);
+  const attackIds = collectNeighborsByLabel(adj, nodesById, actorIds, ["AttackPattern"]);
+  const locationIds = collectNeighborsByLabel(adj, nodesById, actorIds, ["Location"]);
+
+  [
+    hostIds,
+    nvtIds,
+    intrusionIds,
+    malwareIds,
+    attackIds,
+    locationIds,
+  ].forEach(setRef => {
+    for (const id of setRef) keep.add(id);
+  });
+
+  const inSet = (setRef, id) => setRef.has(id);
+  const isAllowedEdge = (a, b) => {
+    const inHost = inSet(hostIds, a) || inSet(hostIds, b);
+    const inCve = inSet(cveAnchors, a) || inSet(cveAnchors, b);
+    const inNvt = inSet(nvtIds, a) || inSet(nvtIds, b);
+    const inIntr = inSet(intrusionIds, a) || inSet(intrusionIds, b);
+    const inMal = inSet(malwareIds, a) || inSet(malwareIds, b);
+    const inAct = inIntr || inMal;
+    const inAtt = inSet(attackIds, a) || inSet(attackIds, b);
+    const inLoc = inSet(locationIds, a) || inSet(locationIds, b);
+
+    if (inHost && inCve) return true; // Host <-> CVE
+    if (inHost && inNvt) return true; // Host <-> NVT (kvůli scan vazbě)
+    if (inCve && inNvt) return true;  // CVE <-> NVT
+    if (inCve && inAct) return true;  // CVE <-> IntrusionSet/Malware
+    if (inNvt && inAct) return true;  // NVT <-> IntrusionSet/Malware
+    if (inAct && inAtt) return true;  // Actor <-> AttackPattern
+    if (inAct && inLoc) return true;  // Actor <-> Location
+    return false;
+  };
+
+  const filteredNodes = nodes.filter(n => keep.has(n.id));
+  const filteredEdges = edges.filter(e => {
+    if (!keep.has(e.source) || !keep.has(e.target)) return false;
+    return isAllowedEdge(e.source, e.target);
+  });
+
+  return {
+    ...rawData,
+    nodes: filteredNodes,
+    edges: filteredEdges,
+  };
+}
+
 function drawGraph(data) {
   svg.selectAll("*").remove();
 
@@ -203,7 +328,8 @@ async function loadGraph(nodeId) {
     currentNodeId = nodeId;
     const url = `/api/graph?node_id=${encodeURIComponent(nodeId)}&hops=${hops}&max_nodes=${maxNodes}&max_edges=${maxEdges}`;
     const data = await apiJson(url);
-    drawGraph(data);
+    const filtered = filterGraphForCvePath(data, nodeId, hops);
+    drawGraph(filtered);
   } catch (err) {
     alert(err.message);
   }
