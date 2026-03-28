@@ -62,6 +62,7 @@ def check_neo4j():
 
 
 
+
 PIPELINE: Iterable[Tuple[str, Path]] = [
     ("OpenVAS -> Neo4j", BASE_DIR / "OpenVas_To_NEO.py"),
     ("CTI (CVE enrichment) -> Neo4j", BASE_DIR / "CVE_To_Neo.py"),
