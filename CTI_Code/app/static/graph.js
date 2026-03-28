@@ -317,6 +317,8 @@ async function bootstrap() {
     loadList("locations"),
   ]);
 
+
+
   if (cache.hosts.length) {
     loadGraph(cache.hosts[0].id);
   }
