@@ -23,7 +23,7 @@ OLLAMA_DEBUG = os.getenv("THREAT_LLM_DEBUG", "1") == "1"
 
 MAX_TEXT_CHARS = int(os.getenv("THREAT_MAX_TEXT_CHARS", "2500"))
 MAX_RESULTS = int(os.getenv("THREAT_MAX_RESULTS", "400"))
-MIN_SEVERITY = float(os.getenv("THREAT_MIN_SEVERITY", "7.0"))
+MIN_SEVERITY = float(os.getenv("THREAT_MIN_SEVERITY", "2.0"))
 MIN_QOD = int(os.getenv("THREAT_MIN_QOD", "70"))
 FORCE_RULES_ONLY = os.getenv("THREAT_RULES_ONLY", "0") == "1"
 
@@ -97,7 +97,7 @@ KEYWORD_RULES: List[Tuple[str, List[str]]] = [
     ("Configuration Weakness", [
         "misconfiguration", "insecure configuration", "hardening", "tls", "ssl", "deprecated", "outdated",
         "missing patch", "vulnerable version", "weak cipher", "tls1.0", "tls1.1", "self-signed",
-        "expired certificate", "cbc", "rc4", "3des", "ssh weak",  "insufficient strength" , " certificate has already expired", ""
+        "expired certificate", "cbc", "rc4", "3des", "ssh weak",  "insufficient strength" , "certificate has already expired", ""
     ]),
 ]
 
@@ -184,6 +184,7 @@ name: {item.get('name')}
 family: {item.get('family')}
 summary: {item.get('summary')}
 description: {item.get('description')}
+tags_raw: {item.get('tags_raw')}
 last_description: {item.get('last_description')}
 port_samples: {item.get('ports')}
 cvss: {item.get('cvss')}
@@ -203,6 +204,7 @@ def classify_one(item: Dict) -> Dict:
         item.get("name") or "",
         item.get("family") or "",
         item.get("summary") or "",
+        item.get("tags_raw") or "",
         item.get("description") or "",
         item.get("last_description") or "",
     ])
@@ -210,6 +212,7 @@ def classify_one(item: Dict) -> Dict:
     if len(combined) > MAX_TEXT_CHARS:
         item = dict(item)
         item["description"] = (item.get("description") or "")[:MAX_TEXT_CHARS]
+        item["tags_raw"] = (item.get("tags_raw") or "")[:MAX_TEXT_CHARS]
         item["last_description"] = (item.get("last_description") or "")[:MAX_TEXT_CHARS]
 
     if LLM_PROVIDER == "ollama" and not FORCE_RULES_ONLY:
@@ -221,6 +224,7 @@ def classify_one(item: Dict) -> Dict:
                 "summary": item.get("summary"),
                 "description": item.get("description"),
                 "last_description": item.get("last_description"),
+                "tags_raw": item.get("tags_raw"),
                 "port_samples": item.get("ports"),
                 "cvss": item.get("cvss"),
                 "threat": item.get("threat"),
@@ -273,6 +277,7 @@ def load_candidates(session) -> List[Dict]:
            n.name AS name,
            n.family AS family,
            n.summary AS summary,
+            n.tags_raw AS tags_raw,
            n.last_description AS last_description,
            substring(coalesce(n.last_description, ''), 0, $max_text_chars) AS description,
            n.cvss_base AS cvss,
