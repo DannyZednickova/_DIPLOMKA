@@ -36,6 +36,10 @@ CTI_ENABLE = os.getenv("CTI_ENABLE", "1") == "1"
 CTI_SCRIPT_PATH = Path(os.getenv("CTI_SCRIPT_PATH", "CVE_To_Neo.py"))  # cesta k CVE_To_Neo.py
 CTI_MAX_CVES = int(os.getenv("CTI_MAX_CVES", "900"))
 
+# --- Threat LLM trigger config ---
+THREAT_ENABLE = os.getenv("THREAT_ENABLE", "1") == "1"
+THREAT_SCRIPT_PATH = Path(os.getenv("THREAT_SCRIPT_PATH", "OpenVas_Threats_LLM.py"))
+
 # předáš CTI skriptu i tyhle parametry, pokud je používá
 CTI_HOPS = os.getenv("HOPS", "1")
 CTI_PAGE_SIZE = os.getenv("PAGE_SIZE", "500")
@@ -50,6 +54,7 @@ CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
 # ----------------------------
 @dataclass
 class Row:
+    result_id: Optional[str]
     host_ip: str
     host_name: Optional[str]
     port_raw: Optional[str]
@@ -64,6 +69,7 @@ class Row:
     nvt_summary: Optional[str]
     nvt_solution: Optional[str]
     nvt_cvss_base: Optional[str]
+    description: Optional[str]
 
     cves: List[str]
 
@@ -171,10 +177,12 @@ def parse_openvas(xml_path: Path) -> List[Row]:
         tags_kv = parse_tags_kv(nvt_tags_raw)
         nvt_summary = tags_kv.get("summary") or _text(r, "nvt/summary") or _text(r, "nvt/description")
         nvt_solution = _text(r, "nvt/solution") or tags_kv.get("solution") or _text(r, "solution")
+        description = _text(r, "description")
 
         cves = extract_cves(r)
 
         rows.append(Row(
+            result_id=_attr(r, "id"),
             host_ip=host_ip,
             host_name=host_name,
             port_raw=port_raw,
@@ -188,6 +196,7 @@ def parse_openvas(xml_path: Path) -> List[Row]:
             nvt_summary=nvt_summary,
             nvt_solution=nvt_solution,
             nvt_cvss_base=nvt_cvss_base,
+            description=description,
             cves=cves,
         ))
 
@@ -242,7 +251,9 @@ def import_openvas_to_neo4j(rows: List[Row]) -> List[str]:
                             n.tags_raw  = coalesce($tags_raw, n.tags_raw),
                             n.summary   = coalesce($summary, n.summary),
                             n.solution  = coalesce($solution, n.solution),
-                            n.cvss_base = coalesce($cvss_base, n.cvss_base)
+                            n.cvss_base = coalesce($cvss_base, n.cvss_base),
+                            n.last_result_id = coalesce($result_id, n.last_result_id),
+                            n.last_description = coalesce($description, n.last_description)
                         """,
                         oid=r.nvt_oid,
                         name=r.nvt_name,
@@ -251,6 +262,8 @@ def import_openvas_to_neo4j(rows: List[Row]) -> List[str]:
                         summary=r.nvt_summary,
                         solution=r.nvt_solution,
                         cvss_base=r.nvt_cvss_base,
+                        result_id=r.result_id,
+                        description=r.description,
                     )
 
                     # Host -> NVT (můžeš dát prázdné props, ale tady dávám jen kontext výsledku)
@@ -262,7 +275,8 @@ def import_openvas_to_neo4j(rows: List[Row]) -> List[str]:
                         SET rel.port = coalesce($port, rel.port),
                             rel.threat = coalesce($threat, rel.threat),
                             rel.severity = coalesce($severity, rel.severity),
-                            rel.qod = coalesce($qod, rel.qod)
+                            rel.qod = coalesce($qod, rel.qod),
+                            rel.result_id = coalesce($result_id, rel.result_id)
                         """,
                         ip=r.host_ip,
                         oid=r.nvt_oid,
@@ -270,6 +284,7 @@ def import_openvas_to_neo4j(rows: List[Row]) -> List[str]:
                         threat=r.threat,
                         severity=r.severity,
                         qod=r.qod,
+                        result_id=r.result_id,
                     )
 
                 for cve in r.cves:
@@ -310,6 +325,31 @@ def import_openvas_to_neo4j(rows: List[Row]) -> List[str]:
 
 
 # ----------------------------
+# CTI/THREAT subprocess helper
+# ----------------------------
+
+
+def _run_subprocess_stream(cmd: List[str], env: Dict[str, str], prefix: str) -> int:
+    print(f"[{prefix}] START cmd={' '.join(cmd)}")
+    proc = subprocess.Popen(
+        cmd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        universal_newlines=True,
+    )
+
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        print(f"[{prefix}] {line.rstrip()}")
+
+    proc.wait()
+    print(f"[{prefix}] END returncode={proc.returncode}")
+    return int(proc.returncode or 0)
+
+# ----------------------------
 # CTI trigger: zavolá CVE_To_Neo.py
 # ----------------------------
 def trigger_new_cti_to_neo(cves: List[str]) -> None:
@@ -341,20 +381,36 @@ def trigger_new_cti_to_neo(cves: List[str]) -> None:
     print(f"[CTI] Running: {py} {CTI_SCRIPT_PATH}")
     print(f"[CTI] CVEs: {len(uniq)}")
 
-    completed = subprocess.run(
-        [py, str(CTI_SCRIPT_PATH)],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    rc = _run_subprocess_stream([py, str(CTI_SCRIPT_PATH)], env=env, prefix="CTI")
 
-    print("[CTI] STDOUT:\n" + (completed.stdout or ""))
-    if completed.stderr:
-        print("[CTI] STDERR:\n" + completed.stderr)
+    if rc != 0:
+        raise RuntimeError(f"[CTI] NEW_CTI_TO_NEO failed with exit code {rc}")
 
-    if completed.returncode != 0:
-        raise RuntimeError(f"[CTI] NEW_CTI_TO_NEO failed with exit code {completed.returncode}")
+
+# ----------------------------
+# Threat trigger: zavolá OpenVas_Threats_LLM.py
+# ----------------------------
+def trigger_threat_llm() -> None:
+    if not THREAT_ENABLE:
+        print("[THREAT] Disabled (THREAT_ENABLE=0).")
+        return
+
+    if not THREAT_SCRIPT_PATH.is_file():
+        raise FileNotFoundError(f"Missing THREAT_SCRIPT_PATH: {THREAT_SCRIPT_PATH}")
+
+    env = os.environ.copy()
+    env["NEO4J_URI"] = NEO4J_URI
+    env["NEO4J_USER"] = NEO4J_USER
+    env["NEO4J_PASS"] = NEO4J_PASS
+    env["NEO4J_DB"] = NEO4J_DB
+
+    py = sys.executable
+    print(f"[THREAT] Running: {py} {THREAT_SCRIPT_PATH}")
+
+    rc = _run_subprocess_stream([py, str(THREAT_SCRIPT_PATH)], env=env, prefix="THREAT")
+
+    if rc != 0:
+        raise RuntimeError(f"[THREAT] OpenVas_Threats_LLM failed with exit code {rc}")
 
 
 def main() -> None:
@@ -373,8 +429,11 @@ def main() -> None:
     cves = import_openvas_to_neo4j(rows)
     print(f"[OPENVAS->NEO4J] unique CVEs={len(cves)}")
 
-    # ✅ tady se volá CVE_To_Neo.py (a NIC jiného CTI se tu nedělá)
+    # ✅ zavolání CVE_To_Neo.py
     trigger_new_cti_to_neo(cves)
+
+    # ✅ volitelné LLM mapování do ThreatClass
+    trigger_threat_llm()
 
     print("[OK] done.")
 
