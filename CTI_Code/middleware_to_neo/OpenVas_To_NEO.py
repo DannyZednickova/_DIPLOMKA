@@ -36,6 +36,12 @@ CTI_ENABLE = os.getenv("CTI_ENABLE", "1") == "1"
 CTI_SCRIPT_PATH = Path(os.getenv("CTI_SCRIPT_PATH", "CVE_To_Neo.py"))  # cesta k CVE_To_Neo.py
 CTI_MAX_CVES = int(os.getenv("CTI_MAX_CVES", "900"))
 
+# --- Threat-class trigger config (OpenVAS -> LLM) ---
+THREAT_LLM_ENABLE = os.getenv("THREAT_LLM_ENABLE", "1") == "1"
+THREAT_LLM_SCRIPT_PATH = Path(os.getenv("THREAT_LLM_SCRIPT_PATH", "Openvas_to_llm.py"))
+
+
+
 # předáš CTI skriptu i tyhle parametry, pokud je používá
 CTI_HOPS = os.getenv("HOPS", "1")
 CTI_PAGE_SIZE = os.getenv("PAGE_SIZE", "500")
@@ -89,6 +95,38 @@ def _attr(elem: Optional[ET.Element], key: str) -> Optional[str]:
         return None
     v = v.strip()
     return v if v else None
+
+def trigger_openvas_to_llm() -> None:
+    if not THREAT_LLM_ENABLE:
+        print("[THREAT] Disabled (THREAT_LLM_ENABLE=0).")
+        return
+
+    if not THREAT_LLM_SCRIPT_PATH.is_file():
+        raise FileNotFoundError(f"Missing THREAT_LLM_SCRIPT_PATH: {THREAT_LLM_SCRIPT_PATH}")
+
+    env = os.environ.copy()
+    env["NEO4J_URI"] = NEO4J_URI
+    env["NEO4J_USER"] = NEO4J_USER
+    env["NEO4J_PASS"] = NEO4J_PASS
+    env["NEO4J_DB"] = NEO4J_DB
+
+    py = sys.executable
+    print(f"[THREAT] Running: {py} {THREAT_LLM_SCRIPT_PATH}")
+
+    completed = subprocess.run(
+        [py, str(THREAT_LLM_SCRIPT_PATH)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    print("[THREAT] STDOUT:\n" + (completed.stdout or ""))
+    if completed.stderr:
+        print("[THREAT] STDERR:\n" + completed.stderr)
+
+    if completed.returncode != 0:
+        raise RuntimeError(f"[THREAT] Openvas_to_llm failed with exit code {completed.returncode}")
 
 
 def _first_text(elem: ET.Element, paths: List[str]) -> Optional[str]:
@@ -373,7 +411,10 @@ def main() -> None:
     cves = import_openvas_to_neo4j(rows)
     print(f"[OPENVAS->NEO4J] unique CVEs={len(cves)}")
 
-    # ✅ tady se volá CVE_To_Neo.py (a NIC jiného CTI se tu nedělá)
+    #  po importu OpenVAS spusť klasifikaci do ThreatClass (Openvas_to_llm.py)
+    trigger_openvas_to_llm()
+
+    #  tady se volá CVE_To_Neo.py (a NIC jiného CTI se tu nedělá)
     trigger_new_cti_to_neo(cves)
 
     print("[OK] done.")

@@ -97,7 +97,7 @@ KEYWORD_RULES: List[Tuple[str, List[str]]] = [
     ("Configuration Weakness", [
         "misconfiguration", "insecure configuration", "hardening", "tls", "ssl", "deprecated", "outdated",
         "missing patch", "vulnerable version", "weak cipher", "tls1.0", "tls1.1", "self-signed",
-        "expired certificate", "cbc", "rc4", "3des", "ssh weak"
+        "expired certificate", "cbc", "rc4", "3des", "ssh weak",  "insufficient strength" , " certificate has already expired", ""
     ]),
 ]
 
@@ -225,6 +225,7 @@ def classify_one(item: Dict) -> Dict:
                 "cvss": item.get("cvss"),
                 "threat": item.get("threat"),
                 "oid": item.get("oid"),
+
             }
             print("[THREAT][OLLAMA][INPUT] " + json.dumps(llm_input_debug, ensure_ascii=False)[:4000])
 
