@@ -45,3 +45,5 @@ Pipeline nyní umí po importu OpenVAS automaticky zavolat lokální LLM klasifi
 - `findings`
 
 Tohle je připravené pro pie/bar grafy bez dalšího textového reportu.
+
+

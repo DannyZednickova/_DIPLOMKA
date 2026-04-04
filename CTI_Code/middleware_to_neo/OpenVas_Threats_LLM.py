@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from typing import Dict, List, Tuple
 
 import requests
@@ -13,13 +14,23 @@ NEO4J_USER = os.getenv("NEO4J_USER")
 NEO4J_PASS = os.getenv("NEO4J_PASS")
 NEO4J_DB = os.getenv("NEO4J_DB")
 
-LLM_PROVIDER = os.getenv("THREAT_LLM_PROVIDER", "ollama")
-LLM_MODEL = os.getenv("THREAT_LLM_MODEL", "qwen2.5:7b-instruct")
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
-OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "35"))
+LLM_PROVIDER = os.getenv("THREAT_LLM_PROVIDER")
+LLM_MODEL = os.getenv("THREAT_LLM_MODEL")
+OLLAMA_URL = os.getenv("OLLAMA_URL")
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT"))
+
+OLLAMA_TAGS_URL = os.getenv("OLLAMA_TAGS_URL", "http://127.0.0.1:11434/api/tags")
+OLLAMA_DEBUG = os.getenv("THREAT_LLM_DEBUG", "1") == "1"
+
+MAX_TEXT_CHARS = int(os.getenv("THREAT_MAX_TEXT_CHARS", "2500"))
+MAX_RESULTS = int(os.getenv("THREAT_MAX_RESULTS", "400"))
+MIN_SEVERITY = float(os.getenv("THREAT_MIN_SEVERITY", "7.0"))
+MIN_QOD = int(os.getenv("THREAT_MIN_QOD", "70"))
+FORCE_RULES_ONLY = os.getenv("THREAT_RULES_ONLY", "0") == "1"
 
 MAX_TEXT_CHARS = int(os.getenv("THREAT_MAX_TEXT_CHARS", "3500"))
 MAX_RESULTS = int(os.getenv("THREAT_MAX_RESULTS", "1000"))
+
 
 THREAT_CLASSES = [
     "Initial Access",
