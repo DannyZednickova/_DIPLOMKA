@@ -36,6 +36,7 @@ Pipeline nyní umí po importu OpenVAS automaticky zavolat lokální LLM klasifi
 - `THREAT_LLM_MODEL=qwen2.5:7b-instruct`
 - `OLLAMA_URL=http://127.0.0.1:11434/api/generate`
 - `THREAT_MAX_RESULTS=1000`
+- `THREAT_LLM_DEBUG=1` (vypis request/response komunikace s Ollama API)
 
 ### Výstup pro grafy (dashboard)
 
@@ -47,3 +48,22 @@ Pipeline nyní umí po importu OpenVAS automaticky zavolat lokální LLM klasifi
 Tohle je připravené pro pie/bar grafy bez dalšího textového reportu.
 
 
+### Performance tuning (LLM)
+
+Pro rychlé běhy nastav:
+- `THREAT_MAX_RESULTS=200`
+- `THREAT_MIN_SEVERITY=7.0`
+- `THREAT_MIN_QOD=70`
+- `THREAT_RULES_ONLY=1` (volitelné, bez volání Ollama)
+
+Skript nyní klasifikuje unikátní NVT (`oid`) místo každého host->finding záznamu, což výrazně zrychlí běh na velkých datech.
+
+
+### Debug komunikace s Ollama
+
+Při `THREAT_LLM_DEBUG=1` uvidíš v logu řádky:
+- `[THREAT][OLLAMA] healthcheck ok ...`
+- `[THREAT][OLLAMA] request oid=...`
+- `[THREAT][OLLAMA] response oid=... status=200 elapsed_ms=...`
+
+Tím je ověřeno, že skript opravdu volá Ollama HTTP API.

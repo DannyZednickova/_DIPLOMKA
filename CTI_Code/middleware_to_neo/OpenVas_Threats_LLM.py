@@ -27,6 +27,16 @@ MIN_SEVERITY = float(os.getenv("THREAT_MIN_SEVERITY", "7.0"))
 MIN_QOD = int(os.getenv("THREAT_MIN_QOD", "70"))
 FORCE_RULES_ONLY = os.getenv("THREAT_RULES_ONLY", "0") == "1"
 
+REQUEST_COUNTER = 0
+
+
+def _next_request_counter() -> int:
+    globals()["REQUEST_COUNTER"] = int(globals().get("REQUEST_COUNTER", 0)) + 1
+    return int(globals()["REQUEST_COUNTER"])
+
+
+def _current_request_counter() -> int:
+    return int(globals().get("REQUEST_COUNTER", 0))
 
 THREAT_CLASSES = [
     "Initial Access",
@@ -97,8 +107,7 @@ def _ollama_healthcheck() -> None:
 
 
 def _call_ollama(prompt: str, oid: str | None = None) -> Dict:
-    global REQUEST_COUNTER
-    REQUEST_COUNTER += 1
+    request_no = _next_request_counter()
     payload = {
         "model": LLM_MODEL,
         "prompt": prompt,
@@ -108,7 +117,7 @@ def _call_ollama(prompt: str, oid: str | None = None) -> Dict:
     }
 
     print(
-        f"[THREAT][OLLAMA] request#{REQUEST_COUNTER} oid={oid or '-'} model={LLM_MODEL} "
+        f"[THREAT][OLLAMA] request#{request_no} oid={oid or '-'} model={LLM_MODEL} "
         f"prompt_chars={len(prompt)} url={OLLAMA_URL}"
     )
 
@@ -116,14 +125,14 @@ def _call_ollama(prompt: str, oid: str | None = None) -> Dict:
     r = requests.post(OLLAMA_URL, json=payload, timeout=OLLAMA_TIMEOUT)
     took_ms = (time.perf_counter() - start) * 1000
 
-    print(f"[THREAT][OLLAMA] response#{REQUEST_COUNTER} oid={oid or '-'} status={r.status_code} elapsed_ms={took_ms:.0f}")
+    print(f"[THREAT][OLLAMA] response#{request_no} oid={oid or '-'} status={r.status_code} elapsed_ms={took_ms:.0f}")
 
     r.raise_for_status()
     body = r.json()
     raw = body.get("response", "{}")
 
     if OLLAMA_DEBUG:
-        print(f"[THREAT][OLLAMA] response#{REQUEST_COUNTER} oid={oid or '-'} payload_chars={len(raw)}")
+        print(f"[THREAT][OLLAMA] response#{request_no} oid={oid or '-'} payload_chars={len(raw)}")
 
     return json.loads(raw)
 
@@ -304,7 +313,7 @@ def main() -> None:
                 persist_classification(session, item, classified)
 
             print_summary(session)
-            print(f"[THREAT][OLLAMA] total_requests={REQUEST_COUNTER}")
+            print(f"[THREAT][OLLAMA] total_requests={_current_request_counter()}")
             print("[THREAT] done")
     finally:
         driver.close()

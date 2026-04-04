@@ -413,42 +413,6 @@ def trigger_threat_llm() -> None:
         raise RuntimeError(f"[THREAT] OpenVas_Threats_LLM failed with exit code {rc}")
 
 
-# ----------------------------
-# Threat trigger: zavolá OpenVas_Threats_LLM.py
-# ----------------------------
-def trigger_threat_llm() -> None:
-    if not THREAT_ENABLE:
-        print("[THREAT] Disabled (THREAT_ENABLE=0).")
-        return
-
-    if not THREAT_SCRIPT_PATH.is_file():
-        raise FileNotFoundError(f"Missing THREAT_SCRIPT_PATH: {THREAT_SCRIPT_PATH}")
-
-    env = os.environ.copy()
-    env["NEO4J_URI"] = NEO4J_URI
-    env["NEO4J_USER"] = NEO4J_USER
-    env["NEO4J_PASS"] = NEO4J_PASS
-    env["NEO4J_DB"] = NEO4J_DB
-
-    py = sys.executable
-    print(f"[THREAT] Running: {py} {THREAT_SCRIPT_PATH}")
-
-    completed = subprocess.run(
-        [py, str(THREAT_SCRIPT_PATH)],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    print("[THREAT] STDOUT:\n" + (completed.stdout or ""))
-    if completed.stderr:
-        print("[THREAT] STDERR:\n" + completed.stderr)
-
-    if completed.returncode != 0:
-        raise RuntimeError(f"[THREAT] OpenVas_Threats_LLM failed with exit code {completed.returncode}")
-
-
 def main() -> None:
     if not OPENVAS_XML_PATH.is_file():
         raise SystemExit(f"Missing OPENVAS_XML_PATH: {OPENVAS_XML_PATH}")
