@@ -325,6 +325,31 @@ def import_openvas_to_neo4j(rows: List[Row]) -> List[str]:
 
 
 # ----------------------------
+# CTI/THREAT subprocess helper
+# ----------------------------
+
+
+def _run_subprocess_stream(cmd: List[str], env: Dict[str, str], prefix: str) -> int:
+    print(f"[{prefix}] START cmd={' '.join(cmd)}")
+    proc = subprocess.Popen(
+        cmd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        universal_newlines=True,
+    )
+
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        print(f"[{prefix}] {line.rstrip()}")
+
+    proc.wait()
+    print(f"[{prefix}] END returncode={proc.returncode}")
+    return int(proc.returncode or 0)
+
+# ----------------------------
 # CTI trigger: zavolá CVE_To_Neo.py
 # ----------------------------
 def trigger_new_cti_to_neo(cves: List[str]) -> None:
@@ -356,20 +381,36 @@ def trigger_new_cti_to_neo(cves: List[str]) -> None:
     print(f"[CTI] Running: {py} {CTI_SCRIPT_PATH}")
     print(f"[CTI] CVEs: {len(uniq)}")
 
-    completed = subprocess.run(
-        [py, str(CTI_SCRIPT_PATH)],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    rc = _run_subprocess_stream([py, str(CTI_SCRIPT_PATH)], env=env, prefix="CTI")
 
-    print("[CTI] STDOUT:\n" + (completed.stdout or ""))
-    if completed.stderr:
-        print("[CTI] STDERR:\n" + completed.stderr)
+    if rc != 0:
+        raise RuntimeError(f"[CTI] NEW_CTI_TO_NEO failed with exit code {rc}")
 
-    if completed.returncode != 0:
-        raise RuntimeError(f"[CTI] NEW_CTI_TO_NEO failed with exit code {completed.returncode}")
+
+# ----------------------------
+# Threat trigger: zavolá OpenVas_Threats_LLM.py
+# ----------------------------
+def trigger_threat_llm() -> None:
+    if not THREAT_ENABLE:
+        print("[THREAT] Disabled (THREAT_ENABLE=0).")
+        return
+
+    if not THREAT_SCRIPT_PATH.is_file():
+        raise FileNotFoundError(f"Missing THREAT_SCRIPT_PATH: {THREAT_SCRIPT_PATH}")
+
+    env = os.environ.copy()
+    env["NEO4J_URI"] = NEO4J_URI
+    env["NEO4J_USER"] = NEO4J_USER
+    env["NEO4J_PASS"] = NEO4J_PASS
+    env["NEO4J_DB"] = NEO4J_DB
+
+    py = sys.executable
+    print(f"[THREAT] Running: {py} {THREAT_SCRIPT_PATH}")
+
+    rc = _run_subprocess_stream([py, str(THREAT_SCRIPT_PATH)], env=env, prefix="THREAT")
+
+    if rc != 0:
+        raise RuntimeError(f"[THREAT] OpenVas_Threats_LLM failed with exit code {rc}")
 
 
 # ----------------------------
