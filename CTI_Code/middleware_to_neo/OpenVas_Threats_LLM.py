@@ -14,10 +14,11 @@ NEO4J_USER = os.getenv("NEO4J_USER")
 NEO4J_PASS = os.getenv("NEO4J_PASS")
 NEO4J_DB = os.getenv("NEO4J_DB")
 
-LLM_PROVIDER = os.getenv("THREAT_LLM_PROVIDER", "ollama")
-LLM_MODEL = os.getenv("THREAT_LLM_MODEL", "qwen2.5:7b-instruct")
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
-OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "35"))
+LLM_PROVIDER = os.getenv("THREAT_LLM_PROVIDER")
+LLM_MODEL = os.getenv("THREAT_LLM_MODEL")
+OLLAMA_URL = os.getenv("OLLAMA_URL")
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT"))
+
 OLLAMA_TAGS_URL = os.getenv("OLLAMA_TAGS_URL", "http://127.0.0.1:11434/api/tags")
 OLLAMA_DEBUG = os.getenv("THREAT_LLM_DEBUG", "1") == "1"
 
@@ -26,6 +27,10 @@ MAX_RESULTS = int(os.getenv("THREAT_MAX_RESULTS", "400"))
 MIN_SEVERITY = float(os.getenv("THREAT_MIN_SEVERITY", "7.0"))
 MIN_QOD = int(os.getenv("THREAT_MIN_QOD", "70"))
 FORCE_RULES_ONLY = os.getenv("THREAT_RULES_ONLY", "0") == "1"
+
+MAX_TEXT_CHARS = int(os.getenv("THREAT_MAX_TEXT_CHARS", "3500"))
+MAX_RESULTS = int(os.getenv("THREAT_MAX_RESULTS", "1000"))
+
 
 THREAT_CLASSES = [
     "Initial Access",
@@ -72,30 +77,7 @@ def _fallback_rule_classify(text: str) -> List[str]:
     return out
 
 
-def _ollama_healthcheck() -> None:
-    if LLM_PROVIDER != "ollama" or FORCE_RULES_ONLY:
-        return
-
-    try:
-        start = time.perf_counter()
-        r = requests.get(OLLAMA_TAGS_URL, timeout=min(OLLAMA_TIMEOUT, 10))
-        took_ms = (time.perf_counter() - start) * 1000
-        r.raise_for_status()
-        payload = r.json()
-        names = [m.get("name", "") for m in payload.get("models", [])]
-        model_present = any(name.startswith(LLM_MODEL) for name in names)
-        print(
-            f"[THREAT][OLLAMA] healthcheck ok status={r.status_code} "
-            f"models={len(names)} model_present={model_present} elapsed_ms={took_ms:.0f}"
-        )
-        if OLLAMA_DEBUG and names:
-            preview = ", ".join(names[:8])
-            print(f"[THREAT][OLLAMA] model list (first): {preview}")
-    except Exception as exc:
-        print(f"[THREAT][OLLAMA] healthcheck failed: {exc}")
-
-
-def _call_ollama(prompt: str, oid: str | None = None) -> Dict:
+def _call_ollama(prompt: str) -> Dict:
     payload = {
         "model": LLM_MODEL,
         "prompt": prompt,
@@ -103,27 +85,10 @@ def _call_ollama(prompt: str, oid: str | None = None) -> Dict:
         "format": "json",
         "options": {"temperature": 0.1},
     }
-
-    if OLLAMA_DEBUG:
-        print(
-            f"[THREAT][OLLAMA] request oid={oid or '-'} model={LLM_MODEL} "
-            f"prompt_chars={len(prompt)} url={OLLAMA_URL}"
-        )
-
-    start = time.perf_counter()
     r = requests.post(OLLAMA_URL, json=payload, timeout=OLLAMA_TIMEOUT)
-    took_ms = (time.perf_counter() - start) * 1000
-
-    if OLLAMA_DEBUG:
-        print(f"[THREAT][OLLAMA] response oid={oid or '-'} status={r.status_code} elapsed_ms={took_ms:.0f}")
-
     r.raise_for_status()
     body = r.json()
     raw = body.get("response", "{}")
-
-    if OLLAMA_DEBUG:
-        print(f"[THREAT][OLLAMA] response oid={oid or '-'} payload_chars={len(raw)}")
-
     return json.loads(raw)
 
 
@@ -140,7 +105,7 @@ name: {item.get('name')}
 family: {item.get('family')}
 summary: {item.get('summary')}
 description: {item.get('description')}
-port_samples: {item.get('ports')}
+port: {item.get('port')}
 cvss: {item.get('cvss')}
 threat: {item.get('threat')}
 
@@ -165,10 +130,9 @@ def classify_one(item: Dict) -> Dict:
         item = dict(item)
         item["description"] = (item.get("description") or "")[:MAX_TEXT_CHARS]
 
-    if LLM_PROVIDER == "ollama" and not FORCE_RULES_ONLY:
+    if LLM_PROVIDER == "ollama":
         try:
-            oid = item.get("oid")
-            result = _call_ollama(_build_prompt(item), oid=oid)
+            result = _call_ollama(_build_prompt(item))
             classes = [c for c in result.get("classes", []) if c in THREAT_CLASSES]
             if not classes:
                 classes = _fallback_rule_classify(combined)
@@ -197,36 +161,21 @@ def classify_one(item: Dict) -> Dict:
 
 
 def load_candidates(session) -> List[Dict]:
-    # DŮLEŽITÉ: klasifikujeme unikátní NVT (OID) místo každého Host->NVT záznamu.
     query = """
     MATCH (h:Host)-[rel:HAS_NVT]->(n:NVT)
-    WITH n,
-         collect(DISTINCT h.ip)[0..200] AS host_ips,
-         collect(DISTINCT rel.port)[0..25] AS ports,
-         max(toFloat(coalesce(rel.severity, n.cvss_base, '0'))) AS max_severity,
-         max(toInteger(coalesce(rel.qod, '0'))) AS max_qod,
-         collect(DISTINCT coalesce(rel.threat, 'unknown'))[0] AS threat_sample
-    WHERE max_severity >= $min_severity AND max_qod >= $min_qod
-    RETURN n.oid AS oid,
+    RETURN h.ip AS host_ip,
+           rel.port AS port,
+           rel.threat AS threat,
+           rel.severity AS severity,
+           n.oid AS oid,
            n.name AS name,
            n.family AS family,
            n.summary AS summary,
-           substring(coalesce(n.last_description, ''), 0, $max_text_chars) AS description,
-           n.cvss_base AS cvss,
-           threat_sample AS threat,
-           host_ips,
-           ports,
-           size(host_ips) AS host_count
-    ORDER BY max_severity DESC, host_count DESC
+           n.last_description AS description,
+           n.cvss_base AS cvss
     LIMIT $limit
     """
-    records = session.run(
-        query,
-        limit=MAX_RESULTS,
-        min_severity=MIN_SEVERITY,
-        min_qod=MIN_QOD,
-        max_text_chars=MAX_TEXT_CHARS,
-    )
+    records = session.run(query, limit=MAX_RESULTS)
     return [dict(r) for r in records]
 
 
@@ -236,8 +185,8 @@ def ensure_schema(session) -> None:
 
 def persist_classification(session, item: Dict, classified: Dict) -> None:
     base_params = {
+        "host_ip": item.get("host_ip"),
         "oid": item.get("oid"),
-        "host_ips": item.get("host_ips") or [],
         "confidence": classified["confidence"],
         "reason": classified["reason"],
         "method": classified["method"],
@@ -250,14 +199,11 @@ def persist_classification(session, item: Dict, classified: Dict) -> None:
             """
             MERGE (t:ThreatClass {name:$label})
             WITH t
-            MATCH (n:NVT {oid:$oid})
+            MATCH (h:Host {ip:$host_ip})-[:HAS_NVT]->(n:NVT {oid:$oid})
             MERGE (n)-[r:INDICATES_THREAT]->(t)
             SET r.confidence = $confidence,
                 r.reason = $reason,
                 r.method = $method
-            WITH t
-            UNWIND $host_ips AS host_ip
-            MATCH (h:Host {ip:host_ip})
             MERGE (h)-[:EXPOSED_TO_THREAT]->(t)
             """,
             **params,
@@ -282,23 +228,14 @@ def main() -> None:
     if not all([NEO4J_URI, NEO4J_USER, NEO4J_PASS]):
         raise SystemExit("Missing Neo4j env: NEO4J_URI/NEO4J_USER/NEO4J_PASS")
 
-    print(
-        f"[THREAT] mode provider={LLM_PROVIDER} model={LLM_MODEL} "
-        f"rules_only={FORCE_RULES_ONLY} min_sev={MIN_SEVERITY} min_qod={MIN_QOD} limit={MAX_RESULTS}"
-    )
-
-    _ollama_healthcheck()
-
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
     try:
         with driver.session(database=NEO4J_DB) as session:
             ensure_schema(session)
             items = load_candidates(session)
-            print(f"[THREAT] unique_nvt_candidates={len(items)}")
+            print(f"[THREAT] candidates={len(items)}")
 
-            for idx, item in enumerate(items, start=1):
-                if OLLAMA_DEBUG and idx % 10 == 0:
-                    print(f"[THREAT] progress {idx}/{len(items)}")
+            for item in items:
                 classified = classify_one(item)
                 persist_classification(session, item, classified)
 
