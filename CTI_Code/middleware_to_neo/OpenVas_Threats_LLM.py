@@ -28,9 +28,6 @@ MIN_SEVERITY = float(os.getenv("THREAT_MIN_SEVERITY", "7.0"))
 MIN_QOD = int(os.getenv("THREAT_MIN_QOD", "70"))
 FORCE_RULES_ONLY = os.getenv("THREAT_RULES_ONLY", "0") == "1"
 
-MAX_TEXT_CHARS = int(os.getenv("THREAT_MAX_TEXT_CHARS", "3500"))
-MAX_RESULTS = int(os.getenv("THREAT_MAX_RESULTS", "1000"))
-
 
 THREAT_CLASSES = [
     "Initial Access",
