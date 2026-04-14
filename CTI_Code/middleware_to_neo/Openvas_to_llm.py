@@ -23,22 +23,13 @@ OLLAMA_DEBUG = os.getenv("THREAT_LLM_DEBUG", "1") == "1"
 
 MAX_TEXT_CHARS = int(os.getenv("THREAT_MAX_TEXT_CHARS", "2500"))
 MAX_RESULTS = int(os.getenv("THREAT_MAX_RESULTS", "400"))
-MIN_SEVERITY = float(os.getenv("THREAT_MIN_SEVERITY", "2.0"))
-MIN_QOD = int(os.getenv("THREAT_MIN_QOD", "70"))
+
 FORCE_RULES_ONLY = os.getenv("THREAT_RULES_ONLY", "0") == "1"
 
 REQUEST_COUNTER = 0
 
-
-def _next_request_counter() -> int:
-    globals()["REQUEST_COUNTER"] = int(globals().get("REQUEST_COUNTER", 0)) + 1
-    return int(globals()["REQUEST_COUNTER"])
-
-
-def _current_request_counter() -> int:
-    return int(globals().get("REQUEST_COUNTER", 0))
-
-
+# LLM vybírá jen jednu třídu. "Unclassified / Needs Review" není povolená LLM,
+# používá se jen interně jako fallback.
 THREAT_CLASSES = [
     "Initial Access",
     "Remote Code Execution",
@@ -56,22 +47,38 @@ THREAT_CLASSES = [
     "Unclassified / Needs Review",
 ]
 
+LLM_THREAT_CLASSES = [
+    "Initial Access",
+    "Remote Code Execution",
+    "Privilege Escalation",
+    "Credential Access",
+    "Lateral Movement",
+    "Data Exfiltration",
+    "Ransomware Risk",
+    "Malware Delivery",
+    "Denial of Service",
+    "Configuration Weakness",
+    "Exposure / Information Disclosure",
+    "Persistence",
+    "Command and Control",
+]
+
 KEYWORD_RULES: List[Tuple[str, List[str]]] = [
     ("Remote Code Execution", [
         "rce", "remote code execution", "execute arbitrary", "command injection", "remote shell", "backdoor",
-        "arbitrary command", "shell remotely", "gain a shell"
+        "arbitrary command", "shell remotely", "gain a shell", "code execution", "execute code"
     ]),
     ("Initial Access", [
         "unauthenticated", "exposed service", "remote access", "publicly accessible", "internet exposed",
-        "open port", "default install", "external attacker"
+        "open port", "external attacker"
     ]),
     ("Exposure / Information Disclosure", [
         "read file", "information disclosure", "lfi", "directory traversal", "sensitive information",
-        "source code disclosure", "path traversal", "file inclusion"
+        "source code disclosure", "path traversal", "file inclusion", "disclosure"
     ]),
     ("Credential Access", [
         "default credentials", "weak password", "bruteforce", "credential", "password", "login bypass",
-        "auth bypass", "account takeover"
+        "auth bypass", "account takeover", "default password"
     ]),
     ("Privilege Escalation", [
         "privilege escalation", "elevation of privilege", "local privilege", "sudo", "setuid"
@@ -96,25 +103,58 @@ KEYWORD_RULES: List[Tuple[str, List[str]]] = [
     ]),
     ("Configuration Weakness", [
         "misconfiguration", "insecure configuration", "hardening", "tls", "ssl", "deprecated", "outdated",
-        "missing patch", "vulnerable version", "weak cipher", "tls1.0", "tls1.1", "self-signed",
-        "expired certificate", "cbc", "rc4", "3des", "ssh weak",  "insufficient strength" , "certificate has already expired", ""
+        "weak cipher", "tls1.0", "tls1.1", "self-signed", "expired certificate", "certificate has already expired",
+        "cbc", "rc4", "3des", "ssh weak", "insufficient strength", "weak key",
+        "rsa keys less than 2048", "less than 2048 bits", "certificate chain"
     ]),
 ]
+
+
+def _next_request_counter() -> int:
+    globals()["REQUEST_COUNTER"] = int(globals().get("REQUEST_COUNTER", 0)) + 1
+    return int(globals()["REQUEST_COUNTER"])
+
+
+def _current_request_counter() -> int:
+    return int(globals().get("REQUEST_COUNTER", 0))
 
 
 def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").lower()).strip()
 
 
-def _fallback_rule_classify(text: str) -> List[str]:
+def _combined_text(item: Dict) -> str:
+    return " ".join([
+        item.get("name") or "",
+        item.get("family") or "",
+        item.get("summary") or "",
+        item.get("tags_raw") or "",
+        item.get("description") or "",
+        item.get("last_description") or "",
+        item.get("solution") or "",
+    ])
+
+
+def _is_ssl_tls_configuration_weakness(item: Dict) -> bool:
+    text = _normalize(_combined_text(item))
+    ssl_tls_markers = [
+        "ssl", "tls", "certificate", "certificate chain",
+        "weak key", "weak cipher", "deprecated protocol",
+        "self-signed", "expired certificate",
+        "tls1.0", "tls1.1", "rc4", "3des",
+        "rsa keys less than 2048", "less than 2048 bits",
+        "replace the certificate with a stronger key",
+        "reissue the certificates"
+    ]
+    return any(marker in text for marker in ssl_tls_markers)
+
+
+def _fallback_rule_classify(text: str) -> str:
     n = _normalize(text)
-    out: List[str] = []
     for label, kws in KEYWORD_RULES:
-        if any(kw in n for kw in kws):
-            out.append(label)
-    if not out:
-        out.append("Unclassified / Needs Review")
-    return out
+        if any(kw and kw in n for kw in kws):
+            return label
+    return "Unclassified / Needs Review"
 
 
 def _ollama_healthcheck() -> None:
@@ -147,7 +187,7 @@ def _call_ollama(prompt: str, oid: str | None = None) -> Dict:
         "prompt": prompt,
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0.1},
+        "options": {"temperature": 0.0},
     }
 
     print(
@@ -172,10 +212,20 @@ def _call_ollama(prompt: str, oid: str | None = None) -> Dict:
 
 
 def _build_prompt(item: Dict) -> str:
-    allowed = ", ".join(THREAT_CLASSES)
+    allowed = ", ".join(LLM_THREAT_CLASSES)
     return f"""
 Jsi analytik kybernetickych hrozeb.
-Mas OpenVAS nalez. Zarad ho do 1-3 trid hrozeb.
+
+Mas OpenVAS/OpenCTI nalez.
+Vyber presne 1 nejlepsi tridu z povolenych trid.
+
+Pevna pravidla:
+- SSL/TLS, certifikaty, weak key, weak cipher, deprecated protocol, expired certificate, self-signed, certificate chain issue => Configuration Weakness
+- command injection, remote shell, arbitrary command, code execution => Remote Code Execution
+- auth bypass, default credentials, weak password => Credential Access
+- information disclosure, file read, directory traversal => Exposure / Information Disclosure
+- Do "Configuration Weakness" nedavej RCE jen proto, ze se tyka SSL/TLS komponenty.
+- Vrat presne jednu tridu.
 
 Allowed classes: [{allowed}]
 
@@ -186,13 +236,14 @@ summary: {item.get('summary')}
 description: {item.get('description')}
 tags_raw: {item.get('tags_raw')}
 last_description: {item.get('last_description')}
+solution: {item.get('solution')}
 port_samples: {item.get('ports')}
 cvss: {item.get('cvss')}
 threat: {item.get('threat')}
 
 Vrat POUZE JSON bez dalsiho textu:
 {{
-  "classes": ["..."],
+  "class": "...",
   "confidence": 0.0,
   "reason": "kratke oduvodneni"
 }}
@@ -200,62 +251,66 @@ Vrat POUZE JSON bez dalsiho textu:
 
 
 def classify_one(item: Dict) -> Dict:
-    combined = " ".join([
-        item.get("name") or "",
-        item.get("family") or "",
-        item.get("summary") or "",
-        item.get("tags_raw") or "",
-        item.get("description") or "",
-        item.get("last_description") or "",
-    ])
+    combined = _combined_text(item)
 
     if len(combined) > MAX_TEXT_CHARS:
         item = dict(item)
         item["description"] = (item.get("description") or "")[:MAX_TEXT_CHARS]
         item["tags_raw"] = (item.get("tags_raw") or "")[:MAX_TEXT_CHARS]
         item["last_description"] = (item.get("last_description") or "")[:MAX_TEXT_CHARS]
+        item["solution"] = (item.get("solution") or "")[:MAX_TEXT_CHARS]
+
+    # Tvrdé pravidlo jen pro SSL/TLS findings
+    if _is_ssl_tls_configuration_weakness(item):
+        return {
+            "classes": ["Configuration Weakness"],
+            "confidence": 0.99,
+            "reason": "Deterministic SSL/TLS weakness mapping",
+            "method": "rules",
+        }
 
     if LLM_PROVIDER == "ollama" and not FORCE_RULES_ONLY:
         try:
-            # DETAILNI VYPIS VSTUPU DO LLM
             llm_input_debug = {
                 "name": item.get("name"),
                 "family": item.get("family"),
                 "summary": item.get("summary"),
                 "description": item.get("description"),
                 "last_description": item.get("last_description"),
+                "solution": item.get("solution"),
                 "tags_raw": item.get("tags_raw"),
                 "port_samples": item.get("ports"),
                 "cvss": item.get("cvss"),
                 "threat": item.get("threat"),
                 "oid": item.get("oid"),
-
             }
             print("[THREAT][OLLAMA][INPUT] " + json.dumps(llm_input_debug, ensure_ascii=False)[:4000])
 
             oid = item.get("oid")
             result = _call_ollama(_build_prompt(item), oid=oid)
-            classes = [c for c in result.get("classes", []) if c in THREAT_CLASSES]
-            if not classes:
-                classes = _fallback_rule_classify(combined)
+
+            label = result.get("class")
+            if label not in LLM_THREAT_CLASSES:
+                label = _fallback_rule_classify(combined)
+
             return {
-                "classes": classes[:3],
+                "classes": [label],
                 "confidence": float(result.get("confidence", 0.55)),
                 "reason": result.get("reason", "LLM classification"),
                 "method": "llm",
             }
         except Exception as exc:
-            classes = _fallback_rule_classify(combined)
+            label = _fallback_rule_classify(combined)
             return {
-                "classes": classes[:3],
+                "classes": [label],
                 "confidence": 0.45,
                 "reason": f"Fallback rules because LLM call failed: {exc}",
                 "method": "rules",
             }
 
-    classes = _fallback_rule_classify(combined)
+    label = _fallback_rule_classify(combined)
     return {
-        "classes": classes[:3],
+        "classes": [label],
         "confidence": 0.4,
         "reason": "Rule-only classification",
         "method": "rules",
@@ -263,36 +318,31 @@ def classify_one(item: Dict) -> Dict:
 
 
 def load_candidates(session) -> List[Dict]:
-    # Klasifikace po unikatnich NVT (OID), ne po kazdem host->nvt nalezu.
     query = """
     MATCH (h:Host)-[rel:HAS_NVT]->(n:NVT)
     WITH n,
          collect(DISTINCT h.ip)[0..200] AS host_ips,
          collect(DISTINCT rel.port)[0..25] AS ports,
-         max(toFloat(coalesce(rel.severity, n.cvss_base, '0'))) AS max_severity,
-         max(toInteger(coalesce(rel.qod, '0'))) AS max_qod,
          collect(DISTINCT coalesce(rel.threat, 'unknown'))[0] AS threat_sample
-    WHERE max_severity >= $min_severity AND max_qod >= $min_qod
     RETURN n.oid AS oid,
            n.name AS name,
            n.family AS family,
            n.summary AS summary,
-            n.tags_raw AS tags_raw,
+           n.tags_raw AS tags_raw,
            n.last_description AS last_description,
            substring(coalesce(n.last_description, ''), 0, $max_text_chars) AS description,
+           n.solution AS solution,
            n.cvss_base AS cvss,
            threat_sample AS threat,
            host_ips,
            ports,
            size(host_ips) AS host_count
-    ORDER BY max_severity DESC, host_count DESC
+    ORDER BY host_count DESC
     LIMIT $limit
     """
     records = session.run(
         query,
         limit=MAX_RESULTS,
-        min_severity=MIN_SEVERITY,
-        min_qod=MIN_QOD,
         max_text_chars=MAX_TEXT_CHARS,
     )
     return [dict(r) for r in records]
@@ -368,7 +418,7 @@ def main() -> None:
 
     print(
         f"[THREAT] mode provider={LLM_PROVIDER} model={LLM_MODEL} "
-        f"rules_only={FORCE_RULES_ONLY} min_sev={MIN_SEVERITY} min_qod={MIN_QOD} limit={MAX_RESULTS}"
+        f"rules_only={FORCE_RULES_ONLY} limit={MAX_RESULTS}"
     )
 
     _ollama_healthcheck()
