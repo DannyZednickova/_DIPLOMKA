@@ -356,24 +356,24 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
 
   const minHostDist = Math.min(...hostIds.map(id => dist.get(id)).filter(Number.isFinite));
   const selectedHosts = hostIds
-    .filter(id => dist.get(id) <= minHostDist + 1)
-    .slice(0, 20);
+    .filter(id => dist.get(id) === minHostDist)
+    .slice(0, 10);
   if (!selectedHosts.length) return rawData;
 
-  const keepNodes = new Set([selectedNodeId]);
-  const keepEdges = new Set();
+  const focusNodes = new Set([selectedNodeId]);
+  const focusEdges = new Set();
   const backtrack = (nodeId) => {
-    keepNodes.add(nodeId);
+    focusNodes.add(nodeId);
     if (nodeId === selectedNodeId) return;
     for (const p of parents.get(nodeId) || []) {
-      keepNodes.add(p);
-      keepEdges.add(edgeKey(p, nodeId));
-      keepEdges.add(edgeKey(nodeId, p));
+      focusNodes.add(p);
+      focusEdges.add(edgeKey(p, nodeId));
+      focusEdges.add(edgeKey(nodeId, p));
       backtrack(p);
     }
   };
   for (const hid of selectedHosts) backtrack(hid);
-  const corePathNodes = new Set(keepNodes);
+  const corePathNodes = new Set(focusNodes);
 
   const ctiSeed = [...corePathNodes].filter(id => {
     const n = nodesById.get(id);
@@ -383,47 +383,27 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
   for (const sid of ctiSeed) {
     for (const nid of adj.get(sid) || []) {
       const neigh = nodesById.get(nid);
-      if (hasAnyLabel(neigh, ["ThreatClass"])) auxThreat.add(nid);
+      if (hasAnyLabel(neigh, ["ThreatClass"])) {
+        auxThreat.add(nid);
+        focusEdges.add(edgeKey(sid, nid));
+        focusEdges.add(edgeKey(nid, sid));
+      }
     }
   }
-  for (const tid of auxThreat) keepNodes.add(tid);
-
-  const contextLabels = [
-    "Host",
-    "CVE",
-    "Vulnerability",
-    "NVT",
-    "ThreatClass",
-    "Malware",
-    "IntrusionSet",
-    "AttackPattern",
-    "Location",
-  ];
-  for (const sourceId of corePathNodes) {
-    for (const neighId of adj.get(sourceId) || []) {
-      const neigh = nodesById.get(neighId);
-      if (hasAnyLabel(neigh, contextLabels)) keepNodes.add(neighId);
-    }
-  }
-
-  const filteredNodes = nodes.filter(n => keepNodes.has(n.id));
-  const filteredEdges = edges.filter(e => {
-    if (!keepNodes.has(e.source) || !keepNodes.has(e.target)) return false;
-    const inPath = keepEdges.has(edgeKey(e.source, e.target)) || keepEdges.has(edgeKey(e.target, e.source));
-    if (inPath) return true;
-    const a = nodesById.get(e.source);
-    const b = nodesById.get(e.target);
-    const threatBridge =
-      (hasAnyLabel(a, ["ThreatClass"]) && hasAnyLabel(b, ["CVE", "Vulnerability", "NVT"])) ||
-      (hasAnyLabel(b, ["ThreatClass"]) && hasAnyLabel(a, ["CVE", "Vulnerability", "NVT"]));
-    if (threatBridge) return true;
-    return corePathNodes.has(e.source) || corePathNodes.has(e.target);
-  });
+  for (const tid of auxThreat) focusNodes.add(tid);
 
   return {
     ...rawData,
-    nodes: filteredNodes,
-    edges: filteredEdges,
+    nodes: nodes.map(n => ({
+      ...n,
+      __focus: focusNodes.has(n.id),
+      __dimmed: !focusNodes.has(n.id),
+    })),
+    edges: edges.map(e => ({
+      ...e,
+      __focus: focusEdges.has(edgeKey(e.source, e.target)) || focusEdges.has(edgeKey(e.target, e.source)),
+      __dimmed: !(focusEdges.has(edgeKey(e.source, e.target)) || focusEdges.has(edgeKey(e.target, e.source))),
+    })),
   };
 }
 
@@ -549,14 +529,19 @@ function drawGraph(data) {
     .data(links)
     .join("line")
     .attr("stroke", d => edgeColor(d.type))
+    .attr("stroke-opacity", d => currentPathMode === "hostPaths" ? (d.__focus ? 0.95 : 0.08) : 0.82)
     .attr("stroke-width", 1.6);
 
-  const showEdgeLabels = links.length <= 120;
+  const focusedLinksCount = links.filter(l => l.__focus).length;
+  const showEdgeLabels = currentPathMode === "hostPaths"
+    ? (focusedLinksCount > 0 && focusedLinksCount <= 180)
+    : links.length <= 120;
   const edgeLabel = showEdgeLabels
     ? gEdgeLabels.selectAll("text")
       .data(links)
       .join("text")
       .text(d => d.type || "")
+      .attr("display", d => currentPathMode === "hostPaths" && !d.__focus ? "none" : null)
       .attr("font-size", 9)
       .attr("font-weight", 700)
       .attr("fill", d => edgeColor(d.type))
@@ -569,6 +554,7 @@ function drawGraph(data) {
     .data(nodes)
     .join("circle")
     .attr("r", d => d.id === currentNodeId ? 10 : 5.4)
+    .attr("opacity", d => currentPathMode === "hostPaths" ? (d.__focus ? 1 : 0.18) : 1)
     .attr("fill", d => nodeColor(d))
     .attr("stroke", d => d.id === currentNodeId ? "#0b1020" : "#fff")
     .attr("stroke-width", d => d.id === currentNodeId ? 3.2 : 1.2)
@@ -580,6 +566,7 @@ function drawGraph(data) {
     .data(nodes)
     .join("text")
     .text(d => nodeLabel(d))
+    .attr("display", d => currentPathMode === "hostPaths" && !d.__focus ? "none" : null)
     .attr("font-size", d => d.id === currentNodeId ? 12 : 10)
     .attr("font-weight", d => d.id === currentNodeId ? 800 : 500)
     .attr("fill", d => d.id === currentNodeId ? "#111827" : "#273043")
