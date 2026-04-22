@@ -156,11 +156,12 @@ summary {
   margin-bottom: 8px;
 }
 .ctx-expand {
-  display: inline-block;
-  margin-top: 4px;
-  color: #175bc7;
+  display: block;
+  margin-top: 5px;
+  color: #0056d6;
   cursor: pointer;
   text-decoration: underline;
+  font-weight: 600;
 }
 #ctxProps {
   font-size: 12px;

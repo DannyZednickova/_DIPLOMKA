@@ -123,11 +123,12 @@ function nodeLooksLikeAttackPattern(node) {
   return hasAnyLabel(node, ["AttackPattern"]);
 }
 
-function truncateText(value, maxLen = 180) {
+function truncateText(value, maxWords = 3) {
   const txt = String(value || "").trim();
   if (!txt) return "";
-  if (txt.length <= maxLen) return txt;
-  return `${txt.slice(0, maxLen)}...`;
+  const words = txt.split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return txt;
+  return `${words.slice(0, maxWords).join(" ")} ...`;
 }
 
 function formatTagsRawForModal(tagsRaw) {
@@ -176,14 +177,19 @@ function addExpandableField(parent, label, value, formatter = (x) => String(x ||
   box.appendChild(lbl);
 
   const preview = document.createElement("span");
-  preview.textContent = ` ${truncateText(text, 190)}`;
+  const previewText = truncateText(text, 3);
+  preview.textContent = ` ${previewText}`;
   box.appendChild(preview);
 
-  if (text.length > 190) {
-    const link = document.createElement("div");
+  if (previewText !== text) {
+    const link = document.createElement("a");
     link.className = "ctx-expand";
-    link.textContent = "Zobrazit celé";
-    link.addEventListener("click", () => openCtxModal(label, text));
+    link.href = "#";
+    link.textContent = "show all";
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      openCtxModal(label, text);
+    });
     box.appendChild(link);
   }
 
