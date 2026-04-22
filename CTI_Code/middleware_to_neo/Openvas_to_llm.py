@@ -369,6 +369,36 @@ def ensure_every_nvt_has_threat_class(session) -> Dict[str, int]:
     }
 
 
+def reconcile_unclassified_links(session) -> Dict[str, int]:
+    drop_nvt_query = """
+    MATCH (t:ThreatClass {name:'Unclassified / Needs Review'})
+    MATCH (n:NVT)-[r:INDICATES_THREAT]->(t)
+    WHERE EXISTS {
+      MATCH (n)-[:INDICATES_THREAT]->(other:ThreatClass)
+      WHERE other.name <> 'Unclassified / Needs Review'
+    }
+    DELETE r
+    RETURN count(n) AS fixed_nvt
+    """
+    nvt_rec = session.run(drop_nvt_query).single()
+
+    drop_host_query = """
+    MATCH (t:ThreatClass {name:'Unclassified / Needs Review'})
+    MATCH (h:Host)-[e:EXPOSED_TO_THREAT]->(t)
+    WHERE NOT EXISTS {
+      MATCH (h)-[:HAS_NVT]->(:NVT)-[:INDICATES_THREAT]->(t)
+    }
+    DELETE e
+    RETURN count(h) AS fixed_hosts
+    """
+    host_rec = session.run(drop_host_query).single()
+
+    return {
+        "fixed_nvt": int((nvt_rec["fixed_nvt"] if nvt_rec else 0) or 0),
+        "fixed_hosts": int((host_rec["fixed_hosts"] if host_rec else 0) or 0),
+    }
+
+
 def print_summary(session) -> None:
     query = """
     MATCH (t:ThreatClass)
@@ -399,12 +429,6 @@ def main() -> None:
         with driver.session(database=NEO4J_DB) as session:
             ensure_schema(session)
 
-            prefill = ensure_every_nvt_has_threat_class(session)
-            print(
-                "[THREAT] prefill_unclassified "
-                f"nvt={prefill['added_nvt']} hosts_linked={prefill['linked_hosts']}"
-            )
-
             items = load_candidates(session)
             print(f"[THREAT] unique_nvt_candidates={len(items)}")
 
@@ -413,6 +437,13 @@ def main() -> None:
                     print(f"[THREAT] progress {idx}/{len(items)}")
                 classified = classify_one(item)
                 persist_classification(session, item, classified)
+
+            reconciled = reconcile_unclassified_links(session)
+            print(
+                "[THREAT] reconciled_unclassified "
+                f"nvt={reconciled['fixed_nvt']} hosts_fixed={reconciled['fixed_hosts']}"
+            )
+
 
             backfilled = ensure_every_nvt_has_threat_class(session)
             print(
