@@ -118,6 +118,144 @@ function nodeLooksLikeNvt(node) {
   return hasAnyLabel(node, ["NVT"]);
 }
 
+function nodeLooksLikeAttackPattern(node) {
+  if (!node) return false;
+  return hasAnyLabel(node, ["AttackPattern"]);
+}
+
+function truncateText(value, maxLen = 180) {
+  const txt = String(value || "").trim();
+  if (!txt) return "";
+  if (txt.length <= maxLen) return txt;
+  return `${txt.slice(0, maxLen)}...`;
+}
+
+function formatTagsRawForModal(tagsRaw) {
+  const raw = String(tagsRaw || "");
+  if (!raw) return "";
+  const parts = raw.split("|").map(x => x.trim()).filter(Boolean);
+  const vec = parts.find(x => x.startsWith("cvss_base_vector="));
+  const rest = parts.filter(x => x !== vec);
+  return [vec || "", rest.join("\n")].filter(Boolean).join("\n\n");
+}
+
+function ensureCtxModal() {
+  let modal = document.getElementById("ctxModal");
+  if (modal) return modal;
+
+  modal = document.createElement("dialog");
+  modal.id = "ctxModal";
+  modal.innerHTML = `
+    <div class="ctx-modal-head">
+      <span id="ctxModalTitle">Detail</span>
+      <button class="ctx-modal-close" id="ctxModalClose">×</button>
+    </div>
+    <pre id="ctxModalText"></pre>
+  `;
+  document.body.appendChild(modal);
+  modal.querySelector("#ctxModalClose").addEventListener("click", () => modal.close());
+  return modal;
+}
+
+function openCtxModal(title, text) {
+  const modal = ensureCtxModal();
+  modal.querySelector("#ctxModalTitle").textContent = title;
+  modal.querySelector("#ctxModalText").textContent = String(text || "");
+  modal.showModal();
+}
+
+function addExpandableField(parent, label, value, formatter = (x) => String(x || "")) {
+  const text = formatter(value);
+  if (!text) return;
+
+  const box = document.createElement("div");
+  box.className = "ctx-kv";
+
+  const lbl = document.createElement("b");
+  lbl.textContent = `${label}:`;
+  box.appendChild(lbl);
+
+  const preview = document.createElement("span");
+  preview.textContent = ` ${truncateText(text, 190)}`;
+  box.appendChild(preview);
+
+  if (text.length > 190) {
+    const link = document.createElement("div");
+    link.className = "ctx-expand";
+    link.textContent = "Zobrazit celé";
+    link.addEventListener("click", () => openCtxModal(label, text));
+    box.appendChild(link);
+  }
+
+  parent.appendChild(box);
+}
+
+function extractAttackPatternUrl(props) {
+  const direct = String(props?.url || "").trim();
+  if (direct) return direct;
+
+  const refs = props?.external_references;
+  if (Array.isArray(refs)) {
+    const hit = refs.find(x => typeof x?.url === "string" && x.url.startsWith("http"));
+    if (hit) return hit.url;
+  }
+  const refsText = String(refs || "");
+  const m = refsText.match(/https?:\/\/attack\.mitre\.org\/[^\s"\\]+/i);
+  return m ? m[0] : "";
+}
+
+function renderContextHighlights(data) {
+  const wrap = document.getElementById("ctxHighlights");
+  wrap.innerHTML = "";
+  const props = data?.props || {};
+  const labels = data?.labels || [];
+
+  if (labels.includes("AttackPattern") || nodeLooksLikeAttackPattern(data)) {
+    const url = extractAttackPatternUrl(props);
+    if (url) {
+      const linkWrap = document.createElement("div");
+      linkWrap.className = "ctx-link";
+      const lbl = document.createElement("b");
+      lbl.textContent = "URL:";
+      linkWrap.appendChild(lbl);
+      linkWrap.appendChild(document.createTextNode(" "));
+      const a = document.createElement("a");
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = url;
+      linkWrap.appendChild(a);
+      wrap.appendChild(linkWrap);
+    }
+  }
+
+  if (labels.includes("NVT") || nodeLooksLikeNvt(data)) {
+    const cvss = String(props.cvss_base || "").trim();
+    const family = String(props.family || "").trim();
+    if (cvss || family) {
+      const kv = document.createElement("div");
+      kv.className = "ctx-kv";
+      if (cvss) {
+        const cvssLbl = document.createElement("b");
+        cvssLbl.textContent = "CVSS:";
+        kv.appendChild(cvssLbl);
+        kv.appendChild(document.createTextNode(` ${cvss}`));
+      }
+      if (family) {
+        if (cvss) kv.appendChild(document.createElement("br"));
+        const famLbl = document.createElement("b");
+        famLbl.textContent = "Family:";
+        kv.appendChild(famLbl);
+        kv.appendChild(document.createTextNode(` ${family}`));
+      }
+      wrap.appendChild(kv);
+    }
+    addExpandableField(wrap, "SOLUTION", props.solution);
+    addExpandableField(wrap, "Summary", props.summary);
+    addExpandableField(wrap, "Tags_Raw", props.tags_raw, formatTagsRawForModal);
+  }
+}
+
 function resolveAnchorIds(nodes, selectedNodeId, mode) {
   const selectedNorm = String(selectedNodeId || "").trim().toUpperCase();
   const out = new Set();
@@ -433,18 +571,23 @@ async function loadList(kind) {
 
 async function openCtx(node) {
   const panel = document.getElementById("ctx");
+  const propsEl = document.getElementById("ctxProps");
   panel.style.display = "block";
 
   document.getElementById("ctxTitle").textContent = nodeLabel(node);
   document.getElementById("ctxMeta").textContent = `${(node.labels || []).join(", ")} | id=${node.id}`;
-  document.getElementById("ctxProps").textContent = "Loading...";
+  document.getElementById("ctxHighlights").innerHTML = "";
+  propsEl.classList.remove("nvt-compact");
+  propsEl.textContent = "Loading...";
   document.getElementById("ctxNeigh").innerHTML = "Loading...";
 
   try {
     const data = await apiJson(`/api/node?id=${encodeURIComponent(node.id)}&neigh_limit=120`);
     document.getElementById("ctxTitle").textContent = nodeLabel(data);
     document.getElementById("ctxMeta").textContent = `${(data.labels || []).join(", ")} | id=${data.id}`;
-    document.getElementById("ctxProps").textContent = JSON.stringify(data.props || {}, null, 2);
+    renderContextHighlights(data);
+    if (nodeLooksLikeNvt(data)) propsEl.classList.add("nvt-compact");
+    propsEl.textContent = JSON.stringify(data.props || {}, null, 2);
 
     const neigh = document.getElementById("ctxNeigh");
     neigh.innerHTML = "";
@@ -458,7 +601,7 @@ async function openCtx(node) {
       neigh.appendChild(div);
     });
   } catch (err) {
-    document.getElementById("ctxProps").textContent = err.message;
+    propsEl.textContent = err.message;
     document.getElementById("ctxNeigh").innerHTML = "";
   }
 }
