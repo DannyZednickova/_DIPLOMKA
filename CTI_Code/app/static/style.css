@@ -75,11 +75,7 @@ header input[type="number"] { width: 78px; }
   border-radius: 12px 12px 0 0;
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.15);
-  transition: transform 220ms ease;
-}
-
-#legendDrawer.collapsed {
-  transform: translateY(calc(100% - 42px));
+  overflow: hidden;
 }
 
 #legendToggle {
@@ -98,6 +94,12 @@ header input[type="number"] { width: 78px; }
 #legendBody {
   max-height: 230px;
   overflow: auto;
+  transition: max-height 180ms ease;
+}
+
+#legendDrawer.collapsed #legendBody {
+  max-height: 0;
+  overflow: hidden;
 }
 
 #legend {

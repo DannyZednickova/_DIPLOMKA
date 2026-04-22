@@ -429,16 +429,19 @@ function drawGraph(data) {
     .attr("stroke", d => edgeColor(d.type))
     .attr("stroke-width", 1.6);
 
-  const edgeLabel = gEdgeLabels.selectAll("text")
-    .data(links)
-    .join("text")
-    .text(d => d.type || "")
-    .attr("font-size", 9)
-    .attr("font-weight", 700)
-    .attr("fill", d => edgeColor(d.type))
-    .attr("stroke", "#ffffff")
-    .attr("stroke-width", 0.28)
-    .attr("paint-order", "stroke");
+  const showEdgeLabels = links.length <= 260;
+  const edgeLabel = showEdgeLabels
+    ? gEdgeLabels.selectAll("text")
+      .data(links)
+      .join("text")
+      .text(d => d.type || "")
+      .attr("font-size", 9)
+      .attr("font-weight", 700)
+      .attr("fill", d => edgeColor(d.type))
+      .attr("stroke", "#ffffff")
+      .attr("stroke-width", 0.28)
+      .attr("paint-order", "stroke")
+    : null;
 
   const node = gNodes.selectAll("circle")
     .data(nodes)
@@ -463,13 +466,13 @@ function drawGraph(data) {
     .attr("paint-order", "stroke");
 
   sim = d3.forceSimulation(nodes)
-    .alpha(0.55)
-    .alphaDecay(0.05)
-    .velocityDecay(0.5)
-    .force("link", d3.forceLink(links).id(d => d.id).distance(115).strength(0.18))
-    .force("charge", d3.forceManyBody().strength(-260))
+    .alpha(0.26)
+    .alphaDecay(0.18)
+    .velocityDecay(0.72)
+    .force("link", d3.forceLink(links).id(d => d.id).distance(108).strength(0.14))
+    .force("charge", d3.forceManyBody().strength(-210))
     .force("center", d3.forceCenter(width() / 2, height() / 2))
-    .force("collide", d3.forceCollide(18))
+    .force("collide", d3.forceCollide(16))
     .on("tick", () => {
       link
         .attr("x1", d => d.source.x)
@@ -485,10 +488,15 @@ function drawGraph(data) {
         .attr("x", d => d.x + 7)
         .attr("y", d => d.y - 7);
 
-      edgeLabel
-        .attr("x", d => (d.source.x + d.target.x) / 2)
-        .attr("y", d => (d.source.y + d.target.y) / 2 - 4);
+      if (edgeLabel) {
+        edgeLabel
+          .attr("x", d => (d.source.x + d.target.x) / 2)
+          .attr("y", d => (d.source.y + d.target.y) / 2 - 4);
+      }
     });
+  setTimeout(() => {
+    if (sim) sim.stop();
+  }, 900);
 
   node.on("click", async (event, d) => {
     if (event.shiftKey) {
