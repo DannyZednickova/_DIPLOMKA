@@ -14,6 +14,7 @@ const LIST_ENDPOINTS = {
   intrusion: "/api/list/intrusion-sets?limit=900",
   attack: "/api/list/attack-patterns?limit=900",
   locations: "/api/list/locations?limit=900",
+  threatclasses: "/api/list/threat-classes?limit=900",
 };
 
 const cache = {
@@ -24,6 +25,7 @@ const cache = {
   intrusion: [],
   attack: [],
   locations: [],
+  threatclasses: [],
 };
 
 function nodeLabel(node) {
@@ -40,6 +42,7 @@ function majorLabel(node) {
   if (labels.includes("IntrusionSet")) return "IntrusionSet";
   if (labels.includes("AttackPattern")) return "AttackPattern";
   if (labels.includes("Location")) return "Location";
+  if (labels.includes("ThreatClass")) return "ThreatClass";
   return labels[0] || "Other";
 }
 
@@ -54,6 +57,7 @@ function nodeColor(node) {
     IntrusionSet: "#26b8d4",
     AttackPattern: "#9ce1e8",
     Location: "#f6c266",
+    ThreatClass: "#ff6b6b",
     Other: "#9aa2b0",
   };
   return map[key] || map.Other;
@@ -183,12 +187,16 @@ function filterGraphForFocusedPath(rawData, selectedNodeId, hops, selectionKind)
   const actorIds = new Set([...intrusionIds, ...malwareIds]);
   const attackIds = collectNeighborsByLabel(adj, nodesById, actorIds, ["AttackPattern"]);
   const locationIds = collectNeighborsByLabel(adj, nodesById, actorIds, ["Location"]);
+  const threatIds = collectNeighborsByLabel(adj, nodesById, ctiSeed, ["ThreatClass"]);
+  const hostFromThreat = collectNeighborsByLabel(adj, nodesById, threatIds, ["Host"]);
+  for (const id of hostFromThreat) hostIds.add(id);
 
   [
     intrusionIds,
     malwareIds,
     attackIds,
     locationIds,
+    threatIds,
   ].forEach(setRef => {
     for (const id of setRef) keep.add(id);
   });
@@ -203,12 +211,16 @@ function filterGraphForFocusedPath(rawData, selectedNodeId, hops, selectionKind)
     const inAct = inIntr || inMal;
     const inAtt = inSet(attackIds, a) || inSet(attackIds, b);
     const inLoc = inSet(locationIds, a) || inSet(locationIds, b);
+    const inThreat = inSet(threatIds, a) || inSet(threatIds, b);
 
     if (inHost && inCve) return true; // Host <-> CVE
     if (inHost && inNvt) return true; // Host <-> NVT (kvůli scan vazbě)
+    if (inHost && inThreat) return true; // Host <-> ThreatClass
     if (inCve && inNvt) return true;  // CVE <-> NVT
     if (inCve && inAct) return true;  // CVE <-> IntrusionSet/Malware
+    if (inCve && inThreat) return true; // CVE <-> ThreatClass
     if (inNvt && inAct) return true;  // NVT <-> IntrusionSet/Malware
+    if (inNvt && inThreat) return true; // NVT <-> ThreatClass
     if (inAct && inAtt) return true;  // Actor <-> AttackPattern
     if (inAct && inLoc) return true;  // Actor <-> Location
     return false;
@@ -482,6 +494,7 @@ async function bootstrap() {
     loadList("intrusion"),
     loadList("attack"),
     loadList("locations"),
+    loadList("threatclasses"),
   ]);
 
 
