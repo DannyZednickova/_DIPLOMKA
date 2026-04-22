@@ -730,6 +730,17 @@ function bootstrapEvents() {
     document.getElementById("ctx").style.display = "none";
   });
 
+  const legendToggle = document.getElementById("legendToggle");
+  const legendDrawer = document.getElementById("legendDrawer");
+  if (legendToggle && legendDrawer) {
+    legendToggle.addEventListener("click", () => {
+      const willOpen = legendDrawer.classList.contains("collapsed");
+      legendDrawer.classList.toggle("collapsed", !willOpen);
+      legendToggle.setAttribute("aria-expanded", willOpen ? "true" : "false");
+      legendToggle.textContent = willOpen ? "Legenda grafu ▼" : "Legenda grafu ▲";
+    });
+  }
+
   window.addEventListener("resize", () => {
     if (currentNodeId) loadGraph(currentNodeId);
   });
