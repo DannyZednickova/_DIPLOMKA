@@ -63,6 +63,26 @@ function nodeColor(node) {
   return map[key] || map.Other;
 }
 
+function edgeColor(edgeType) {
+  const key = String(edgeType || "").toUpperCase();
+  const map = {
+    HAS_THREAT: "#f08ab6",
+    EXPOSED_TO_THREAT: "#f5b26b",
+    INDICATES_THREAT: "#ff6b6b",
+    REFERS_TO: "#9ba8bd",
+    TARGETS: "#9f7aea",
+    USES: "#58c7b2",
+    VULNERABLE_TO: "#c084fc",
+    HAS_NVT: "#6bcf7f",
+  };
+  if (map[key]) return map[key];
+
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 58%, 55%)`;
+}
+
 async function apiJson(url) {
   const res = await fetch(url);
   if (!res.ok) {
@@ -398,22 +418,35 @@ function drawGraph(data) {
     return;
   }
 
-  const gLinks = svg.append("g").attr("stroke", "#8f97a8").attr("stroke-opacity", 0.7);
+  const gLinks = svg.append("g").attr("stroke-opacity", 0.82);
+  const gEdgeLabels = svg.append("g");
   const gNodes = svg.append("g");
   const gLabels = svg.append("g");
 
   const link = gLinks.selectAll("line")
     .data(links)
     .join("line")
-    .attr("stroke-width", 1.2);
+    .attr("stroke", d => edgeColor(d.type))
+    .attr("stroke-width", 1.6);
+
+  const edgeLabel = gEdgeLabels.selectAll("text")
+    .data(links)
+    .join("text")
+    .text(d => d.type || "")
+    .attr("font-size", 9)
+    .attr("font-weight", 700)
+    .attr("fill", d => edgeColor(d.type))
+    .attr("stroke", "#ffffff")
+    .attr("stroke-width", 0.28)
+    .attr("paint-order", "stroke");
 
   const node = gNodes.selectAll("circle")
     .data(nodes)
     .join("circle")
-    .attr("r", d => d.id === currentNodeId ? 8 : 5)
+    .attr("r", d => d.id === currentNodeId ? 10 : 5.4)
     .attr("fill", d => nodeColor(d))
-    .attr("stroke", d => d.id === currentNodeId ? "#111" : "#fff")
-    .attr("stroke-width", d => d.id === currentNodeId ? 2.2 : 1.1)
+    .attr("stroke", d => d.id === currentNodeId ? "#0b1020" : "#fff")
+    .attr("stroke-width", d => d.id === currentNodeId ? 3.2 : 1.2)
     .call(drag());
 
   node.append("title").text(d => `${nodeLabel(d)}\n${(d.labels || []).join(", ")}`);
@@ -422,17 +455,21 @@ function drawGraph(data) {
     .data(nodes)
     .join("text")
     .text(d => nodeLabel(d))
-    .attr("font-size", 10)
-    .attr("fill", "#273043")
+    .attr("font-size", d => d.id === currentNodeId ? 12 : 10)
+    .attr("font-weight", d => d.id === currentNodeId ? 800 : 500)
+    .attr("fill", d => d.id === currentNodeId ? "#111827" : "#273043")
     .attr("stroke", "#fff")
     .attr("stroke-width", 0.25)
     .attr("paint-order", "stroke");
 
   sim = d3.forceSimulation(nodes)
-    .force("link", d3.forceLink(links).id(d => d.id).distance(60).strength(0.24))
-    .force("charge", d3.forceManyBody().strength(-160))
+    .alpha(0.55)
+    .alphaDecay(0.05)
+    .velocityDecay(0.5)
+    .force("link", d3.forceLink(links).id(d => d.id).distance(115).strength(0.18))
+    .force("charge", d3.forceManyBody().strength(-260))
     .force("center", d3.forceCenter(width() / 2, height() / 2))
-    .force("collide", d3.forceCollide(10))
+    .force("collide", d3.forceCollide(18))
     .on("tick", () => {
       link
         .attr("x1", d => d.source.x)
@@ -447,6 +484,10 @@ function drawGraph(data) {
       text
         .attr("x", d => d.x + 7)
         .attr("y", d => d.y - 7);
+
+      edgeLabel
+        .attr("x", d => (d.source.x + d.target.x) / 2)
+        .attr("y", d => (d.source.y + d.target.y) / 2 - 4);
     });
 
   node.on("click", async (event, d) => {
@@ -460,15 +501,18 @@ function drawGraph(data) {
   svg.call(
     d3.zoom().scaleExtent([0.1, 4]).on("zoom", ({ transform }) => {
       gLinks.attr("transform", transform);
+      gEdgeLabels.attr("transform", transform);
       gNodes.attr("transform", transform);
       gLabels.attr("transform", transform);
     })
   );
+
+  renderLegend(nodes, links);
 }
 
 function drag() {
   function started(event, d) {
-    if (!event.active) sim.alphaTarget(0.3).restart();
+    if (!event.active) sim.alphaTarget(0.12).restart();
     d.fx = d.x;
     d.fy = d.y;
   }
@@ -480,8 +524,8 @@ function drag() {
 
   function ended(event, d) {
     if (!event.active) sim.alphaTarget(0);
-    d.fx = null;
-    d.fy = null;
+    d.fx = event.x;
+    d.fy = event.y;
   }
 
   return d3.drag().on("start", started).on("drag", dragged).on("end", ended);
@@ -524,6 +568,7 @@ async function loadGraph(nodeId) {
     const data = await apiJson(url);
     const filtered = filterGraphForFocusedPath(data, nodeId, hops, currentSelectionKind);
     drawGraph(filtered);
+    refreshListHighlights();
   } catch (err) {
     alert(err.message);
   }
@@ -537,6 +582,7 @@ function renderList(kind, items) {
   for (const item of items) {
     const div = document.createElement("div");
     div.className = "item";
+    if (item.id === currentNodeId) div.classList.add("selected-item");
     div.textContent = item.title;
     div.onclick = () => {
       currentSelectionKind = kind;
@@ -544,6 +590,55 @@ function renderList(kind, items) {
     };
     el.appendChild(div);
   }
+}
+
+function refreshListHighlights() {
+  Object.keys(cache).forEach(kind => renderList(kind, cache[kind] || []));
+}
+
+function renderLegend(nodes, links) {
+  const box = document.getElementById("legend");
+  if (!box) return;
+  box.innerHTML = "";
+
+  const nodeTypes = [...new Set((nodes || []).map(n => majorLabel(n)))].sort();
+  const relTypes = [...new Set((links || []).map(e => String(e.type || "").toUpperCase()).filter(Boolean))].sort();
+
+  const nodeTitle = document.createElement("h4");
+  nodeTitle.textContent = "Legenda uzlů";
+  box.appendChild(nodeTitle);
+
+  const nodeWrap = document.createElement("div");
+  nodeWrap.className = "legend-grid";
+  nodeTypes.forEach(type => {
+    const item = document.createElement("div");
+    item.className = "legend-item";
+    const sw = document.createElement("span");
+    sw.className = "swatch";
+    sw.style.background = nodeColor({ labels: [type] });
+    item.appendChild(sw);
+    item.appendChild(document.createTextNode(type));
+    nodeWrap.appendChild(item);
+  });
+  box.appendChild(nodeWrap);
+
+  const relTitle = document.createElement("h4");
+  relTitle.textContent = "Legenda vazeb";
+  box.appendChild(relTitle);
+
+  const relWrap = document.createElement("div");
+  relWrap.className = "legend-grid";
+  relTypes.forEach(type => {
+    const item = document.createElement("div");
+    item.className = "legend-item";
+    const sw = document.createElement("span");
+    sw.className = "line-swatch";
+    sw.style.background = edgeColor(type);
+    item.appendChild(sw);
+    item.appendChild(document.createTextNode(type));
+    relWrap.appendChild(item);
+  });
+  box.appendChild(relWrap);
 }
 
 function wireFilter(kind) {
@@ -626,6 +721,17 @@ function bootstrapEvents() {
   document.getElementById("ctxClose").addEventListener("click", () => {
     document.getElementById("ctx").style.display = "none";
   });
+
+  const legendToggle = document.getElementById("legendToggle");
+  const legendDrawer = document.getElementById("legendDrawer");
+  if (legendToggle && legendDrawer) {
+    legendToggle.addEventListener("click", () => {
+      const willOpen = legendDrawer.classList.contains("collapsed");
+      legendDrawer.classList.toggle("collapsed", !willOpen);
+      legendToggle.setAttribute("aria-expanded", willOpen ? "true" : "false");
+      legendToggle.textContent = willOpen ? "Legenda grafu ▼" : "Legenda grafu ▲";
+    });
+  }
 
   window.addEventListener("resize", () => {
     if (currentNodeId) loadGraph(currentNodeId);
