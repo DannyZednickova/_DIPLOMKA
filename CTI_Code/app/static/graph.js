@@ -429,7 +429,7 @@ function drawGraph(data) {
     .attr("stroke", d => edgeColor(d.type))
     .attr("stroke-width", 1.6);
 
-  const showEdgeLabels = links.length <= 260;
+  const showEdgeLabels = links.length <= 120;
   const edgeLabel = showEdgeLabels
     ? gEdgeLabels.selectAll("text")
       .data(links)
@@ -466,13 +466,13 @@ function drawGraph(data) {
     .attr("paint-order", "stroke");
 
   sim = d3.forceSimulation(nodes)
-    .alpha(0.26)
-    .alphaDecay(0.18)
-    .velocityDecay(0.72)
-    .force("link", d3.forceLink(links).id(d => d.id).distance(108).strength(0.14))
-    .force("charge", d3.forceManyBody().strength(-210))
+    .alpha(0.36)
+    .alphaDecay(0.06)
+    .velocityDecay(0.42)
+    .force("link", d3.forceLink(links).id(d => d.id).distance(170).strength(0.16))
+    .force("charge", d3.forceManyBody().strength(-700))
     .force("center", d3.forceCenter(width() / 2, height() / 2))
-    .force("collide", d3.forceCollide(16))
+    .force("collide", d3.forceCollide(24))
     .on("tick", () => {
       link
         .attr("x1", d => d.source.x)
@@ -496,7 +496,7 @@ function drawGraph(data) {
     });
   setTimeout(() => {
     if (sim) sim.stop();
-  }, 900);
+  }, 2500);
 
   node.on("click", async (event, d) => {
     if (event.shiftKey) {
