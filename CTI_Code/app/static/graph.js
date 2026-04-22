@@ -587,38 +587,41 @@ function drawGraph(data) {
     .attr("stroke-width", 0.25)
     .attr("paint-order", "stroke");
 
+  const ticked = () => {
+    link
+      .attr("x1", d => d.source.x)
+      .attr("y1", d => d.source.y)
+      .attr("x2", d => d.target.x)
+      .attr("y2", d => d.target.y);
+
+    node
+      .attr("cx", d => d.x)
+      .attr("cy", d => d.y);
+
+    text
+      .attr("x", d => d.x + 7)
+      .attr("y", d => d.y - 7);
+
+    if (edgeLabel) {
+      edgeLabel
+        .attr("x", d => (d.source.x + d.target.x) / 2)
+        .attr("y", d => (d.source.y + d.target.y) / 2 - 4);
+    }
+  };
+
   sim = d3.forceSimulation(nodes)
-    .alpha(0.22)
-    .alphaDecay(0.12)
-    .velocityDecay(0.68)
-    .force("link", d3.forceLink(links).id(d => d.id).distance(165).strength(0.13))
-    .force("charge", d3.forceManyBody().strength(-420))
+    .alpha(0.26)
+    .alphaDecay(0.2)
+    .velocityDecay(0.72)
+    .force("link", d3.forceLink(links).id(d => d.id).distance(220).strength(0.11))
+    .force("charge", d3.forceManyBody().strength(-900))
     .force("center", d3.forceCenter(width() / 2, height() / 2))
-    .force("collide", d3.forceCollide(20))
-    .on("tick", () => {
-      link
-        .attr("x1", d => d.source.x)
-        .attr("y1", d => d.source.y)
-        .attr("x2", d => d.target.x)
-        .attr("y2", d => d.target.y);
+    .force("collide", d3.forceCollide(28))
+    .on("tick", ticked);
 
-      node
-        .attr("cx", d => d.x)
-        .attr("cy", d => d.y);
-
-      text
-        .attr("x", d => d.x + 7)
-        .attr("y", d => d.y - 7);
-
-      if (edgeLabel) {
-        edgeLabel
-          .attr("x", d => (d.source.x + d.target.x) / 2)
-          .attr("y", d => (d.source.y + d.target.y) / 2 - 4);
-      }
-    });
-  setTimeout(() => {
-    if (sim) sim.stop();
-  }, 1400);
+  sim.stop();
+  for (let i = 0; i < 100; i++) sim.tick();
+  ticked();
 
   node.on("click", async (event, d) => {
     if (event.shiftKey) {
@@ -642,7 +645,7 @@ function drawGraph(data) {
 
 function drag() {
   function started(event, d) {
-    if (!event.active) sim.alphaTarget(0.05).restart();
+    if (!event.active) sim.alphaTarget(0.09).restart();
     d.fx = d.x;
     d.fy = d.y;
   }
