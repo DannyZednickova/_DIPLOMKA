@@ -5,6 +5,7 @@ const height = () => document.getElementById("graph").clientHeight;
 let sim = null;
 let currentNodeId = null;
 let currentSelectionKind = null;
+let currentPathMode = "all";
 
 const LIST_ENDPOINTS = {
   hosts: "/api/list/hosts?limit=500",
@@ -305,6 +306,114 @@ function resolveAnchorIds(nodes, selectedNodeId, mode) {
   return out;
 }
 
+function edgeKey(a, b) {
+  return `${a}::${b}`;
+}
+
+function isActorLikeSelection(kind, selectedNode) {
+  const k = String(kind || "").toLowerCase();
+  if (k === "malware" || k === "intrusion" || k === "attack") return true;
+  return hasAnyLabel(selectedNode, ["Malware", "IntrusionSet", "AttackPattern"]);
+}
+
+function filterGraphForHostPaths(rawData, selectedNodeId, selectionKind, pathMode) {
+  if (pathMode !== "hostPaths") return rawData;
+  const nodes = rawData?.nodes || [];
+  const edges = rawData?.edges || [];
+  if (!nodes.length || !edges.length) return rawData;
+
+  const nodesById = new Map(nodes.map(n => [n.id, n]));
+  const selected = nodesById.get(selectedNodeId);
+  if (!selected || hasAnyLabel(selected, ["Host"])) return rawData;
+  if (!isActorLikeSelection(selectionKind, selected)) return rawData;
+
+  const adj = new Map();
+  const addAdj = (a, b) => {
+    if (!adj.has(a)) adj.set(a, []);
+    adj.get(a).push(b);
+  };
+  for (const e of edges) {
+    if (!e?.source || !e?.target) continue;
+    addAdj(e.source, e.target);
+    addAdj(e.target, e.source);
+  }
+
+  const dist = new Map([[selectedNodeId, 0]]);
+  const parents = new Map();
+  const q = [selectedNodeId];
+  for (let i = 0; i < q.length; i++) {
+    const u = q[i];
+    const d = dist.get(u);
+    for (const v of adj.get(u) || []) {
+      if (!dist.has(v)) {
+        dist.set(v, d + 1);
+        parents.set(v, new Set([u]));
+        q.push(v);
+      } else if (dist.get(v) === d + 1) {
+        if (!parents.has(v)) parents.set(v, new Set());
+        parents.get(v).add(u);
+      }
+    }
+  }
+
+  const hostIds = nodes
+    .filter(n => hasAnyLabel(n, ["Host"]) && dist.has(n.id))
+    .map(n => n.id);
+  if (!hostIds.length) return rawData;
+
+  const minHostDist = Math.min(...hostIds.map(id => dist.get(id)));
+  const selectedHosts = hostIds
+    .filter(id => dist.get(id) === minHostDist)
+    .slice(0, 12);
+  if (!selectedHosts.length) return rawData;
+
+  const keepNodes = new Set([selectedNodeId]);
+  const keepEdges = new Set();
+  const backtrack = (nodeId) => {
+    keepNodes.add(nodeId);
+    if (nodeId === selectedNodeId) return;
+    for (const p of parents.get(nodeId) || []) {
+      keepNodes.add(p);
+      keepEdges.add(edgeKey(p, nodeId));
+      keepEdges.add(edgeKey(nodeId, p));
+      backtrack(p);
+    }
+  };
+  for (const hid of selectedHosts) backtrack(hid);
+
+  const ctiSeed = [...keepNodes].filter(id => {
+    const n = nodesById.get(id);
+    return hasAnyLabel(n, ["CVE", "Vulnerability", "NVT"]);
+  });
+  const auxThreat = new Set();
+  for (const sid of ctiSeed) {
+    for (const nid of adj.get(sid) || []) {
+      const neigh = nodesById.get(nid);
+      if (hasAnyLabel(neigh, ["ThreatClass"])) auxThreat.add(nid);
+    }
+  }
+  for (const tid of auxThreat) keepNodes.add(tid);
+
+  const filteredNodes = nodes.filter(n => keepNodes.has(n.id));
+  const filteredEdges = edges.filter(e => {
+    if (!keepNodes.has(e.source) || !keepNodes.has(e.target)) return false;
+    const inPath = keepEdges.has(edgeKey(e.source, e.target)) || keepEdges.has(edgeKey(e.target, e.source));
+    if (inPath) return true;
+    const a = nodesById.get(e.source);
+    const b = nodesById.get(e.target);
+    const threatBridge =
+      (hasAnyLabel(a, ["ThreatClass"]) && hasAnyLabel(b, ["CVE", "Vulnerability", "NVT"])) ||
+      (hasAnyLabel(b, ["ThreatClass"]) && hasAnyLabel(a, ["CVE", "Vulnerability", "NVT"]));
+    return threatBridge;
+  });
+
+  return {
+    ...rawData,
+    nodes: filteredNodes,
+    edges: filteredEdges,
+  };
+}
+
 function filterGraphForFocusedPath(rawData, selectedNodeId, hops, selectionKind) {
   // Pro CVE/NVT výběr omezíme graf jen na "čistou" CTI cestu:
   // Host -> CVE -> NVT -> (IntrusionSet|Malware) -> (AttackPattern|Location)
@@ -574,7 +683,8 @@ async function loadGraph(nodeId) {
     currentNodeId = nodeId;
     const url = `/api/graph?node_id=${encodeURIComponent(nodeId)}&hops=${hops}&max_nodes=${maxNodes}&max_edges=${maxEdges}`;
     const data = await apiJson(url);
-    const filtered = filterGraphForFocusedPath(data, nodeId, hops, currentSelectionKind);
+    const hostFiltered = filterGraphForHostPaths(data, nodeId, currentSelectionKind, currentPathMode);
+    const filtered = filterGraphForFocusedPath(hostFiltered, nodeId, hops, currentSelectionKind);
     drawGraph(filtered);
     refreshListHighlights();
   } catch (err) {
@@ -724,6 +834,13 @@ function bootstrapEvents() {
   document.getElementById("btnReload").addEventListener("click", () => {
     if (!currentNodeId) return;
     loadGraph(currentNodeId);
+  });
+
+  document.querySelectorAll('input[name="pathMode"]').forEach(inp => {
+    inp.addEventListener("change", () => {
+      currentPathMode = document.querySelector('input[name="pathMode"]:checked')?.value || "all";
+      if (currentNodeId) loadGraph(currentNodeId);
+    });
   });
 
   document.getElementById("ctxClose").addEventListener("click", () => {

@@ -25,6 +25,24 @@ header {
 }
 
 header input[type="number"] { width: 78px; }
+.path-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f8fbff;
+  font-size: 12px;
+  font-weight: 600;
+}
+.path-mode label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
 
 #q {
   width: 420px;
