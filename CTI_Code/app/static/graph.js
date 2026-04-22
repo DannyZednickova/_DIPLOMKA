@@ -466,13 +466,13 @@ function drawGraph(data) {
     .attr("paint-order", "stroke");
 
   sim = d3.forceSimulation(nodes)
-    .alpha(0.36)
-    .alphaDecay(0.06)
-    .velocityDecay(0.42)
-    .force("link", d3.forceLink(links).id(d => d.id).distance(170).strength(0.16))
-    .force("charge", d3.forceManyBody().strength(-700))
+    .alpha(0.22)
+    .alphaDecay(0.12)
+    .velocityDecay(0.68)
+    .force("link", d3.forceLink(links).id(d => d.id).distance(165).strength(0.13))
+    .force("charge", d3.forceManyBody().strength(-420))
     .force("center", d3.forceCenter(width() / 2, height() / 2))
-    .force("collide", d3.forceCollide(24))
+    .force("collide", d3.forceCollide(20))
     .on("tick", () => {
       link
         .attr("x1", d => d.source.x)
@@ -496,7 +496,7 @@ function drawGraph(data) {
     });
   setTimeout(() => {
     if (sim) sim.stop();
-  }, 2500);
+  }, 1400);
 
   node.on("click", async (event, d) => {
     if (event.shiftKey) {
@@ -520,7 +520,7 @@ function drawGraph(data) {
 
 function drag() {
   function started(event, d) {
-    if (!event.active) sim.alphaTarget(0.12).restart();
+    if (!event.active) sim.alphaTarget(0.05).restart();
     d.fx = d.x;
     d.fy = d.y;
   }
