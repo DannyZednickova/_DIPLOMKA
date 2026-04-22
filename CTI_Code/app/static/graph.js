@@ -310,13 +310,7 @@ function edgeKey(a, b) {
   return `${a}::${b}`;
 }
 
-function isActorLikeSelection(kind, selectedNode) {
-  const k = String(kind || "").toLowerCase();
-  if (k === "malware" || k === "intrusion" || k === "attack") return true;
-  return hasAnyLabel(selectedNode, ["Malware", "IntrusionSet", "AttackPattern"]);
-}
-
-function filterGraphForHostPaths(rawData, selectedNodeId, selectionKind, pathMode) {
+function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
   if (pathMode !== "hostPaths") return rawData;
   const nodes = rawData?.nodes || [];
   const edges = rawData?.edges || [];
@@ -325,7 +319,6 @@ function filterGraphForHostPaths(rawData, selectedNodeId, selectionKind, pathMod
   const nodesById = new Map(nodes.map(n => [n.id, n]));
   const selected = nodesById.get(selectedNodeId);
   if (!selected || hasAnyLabel(selected, ["Host"])) return rawData;
-  if (!isActorLikeSelection(selectionKind, selected)) return rawData;
 
   const adj = new Map();
   const addAdj = (a, b) => {
@@ -361,10 +354,10 @@ function filterGraphForHostPaths(rawData, selectedNodeId, selectionKind, pathMod
     .map(n => n.id);
   if (!hostIds.length) return rawData;
 
-  const minHostDist = Math.min(...hostIds.map(id => dist.get(id)));
+  const minHostDist = Math.min(...hostIds.map(id => dist.get(id)).filter(Number.isFinite));
   const selectedHosts = hostIds
-    .filter(id => dist.get(id) === minHostDist)
-    .slice(0, 12);
+    .filter(id => dist.get(id) <= minHostDist + 1)
+    .slice(0, 20);
   if (!selectedHosts.length) return rawData;
 
   const keepNodes = new Set([selectedNodeId]);
@@ -380,8 +373,9 @@ function filterGraphForHostPaths(rawData, selectedNodeId, selectionKind, pathMod
     }
   };
   for (const hid of selectedHosts) backtrack(hid);
+  const corePathNodes = new Set(keepNodes);
 
-  const ctiSeed = [...keepNodes].filter(id => {
+  const ctiSeed = [...corePathNodes].filter(id => {
     const n = nodesById.get(id);
     return hasAnyLabel(n, ["CVE", "Vulnerability", "NVT"]);
   });
@@ -394,6 +388,24 @@ function filterGraphForHostPaths(rawData, selectedNodeId, selectionKind, pathMod
   }
   for (const tid of auxThreat) keepNodes.add(tid);
 
+  const contextLabels = [
+    "Host",
+    "CVE",
+    "Vulnerability",
+    "NVT",
+    "ThreatClass",
+    "Malware",
+    "IntrusionSet",
+    "AttackPattern",
+    "Location",
+  ];
+  for (const sourceId of corePathNodes) {
+    for (const neighId of adj.get(sourceId) || []) {
+      const neigh = nodesById.get(neighId);
+      if (hasAnyLabel(neigh, contextLabels)) keepNodes.add(neighId);
+    }
+  }
+
   const filteredNodes = nodes.filter(n => keepNodes.has(n.id));
   const filteredEdges = edges.filter(e => {
     if (!keepNodes.has(e.source) || !keepNodes.has(e.target)) return false;
@@ -404,7 +416,8 @@ function filterGraphForHostPaths(rawData, selectedNodeId, selectionKind, pathMod
     const threatBridge =
       (hasAnyLabel(a, ["ThreatClass"]) && hasAnyLabel(b, ["CVE", "Vulnerability", "NVT"])) ||
       (hasAnyLabel(b, ["ThreatClass"]) && hasAnyLabel(a, ["CVE", "Vulnerability", "NVT"]));
-    return threatBridge;
+    if (threatBridge) return true;
+    return corePathNodes.has(e.source) || corePathNodes.has(e.target);
   });
 
   return {
@@ -683,7 +696,7 @@ async function loadGraph(nodeId) {
     currentNodeId = nodeId;
     const url = `/api/graph?node_id=${encodeURIComponent(nodeId)}&hops=${hops}&max_nodes=${maxNodes}&max_edges=${maxEdges}`;
     const data = await apiJson(url);
-    const hostFiltered = filterGraphForHostPaths(data, nodeId, currentSelectionKind, currentPathMode);
+    const hostFiltered = filterGraphForHostPaths(data, nodeId, currentPathMode);
     const filtered = filterGraphForFocusedPath(hostFiltered, nodeId, hops, currentSelectionKind);
     drawGraph(filtered);
     refreshListHighlights();
