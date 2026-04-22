@@ -345,3 +345,17 @@ def list_locations(limit: int = 1200):
     """
     rows = run(q, limit=limit)
     return {"results": [r.data() for r in rows]}
+
+
+@app.get("/api/list/threat-classes")
+def list_threat_classes(limit: int = 1200):
+    q = """
+    MATCH (t:ThreatClass)
+    RETURN coalesce(t.name, elementId(t)) AS id,
+           coalesce(t.name, elementId(t)) AS title,
+           labels(t) AS labels
+    ORDER BY title
+    LIMIT $limit
+    """
+    rows = run(q, limit=limit)
+    return {"results": [r.data() for r in rows]}
