@@ -613,7 +613,11 @@ function renderLegend(nodes, links) {
   nodeTypes.forEach(type => {
     const item = document.createElement("div");
     item.className = "legend-item";
-    item.innerHTML = `<span class="swatch" style="background:${nodeColor({ labels: [type] })}"></span>${type}`;
+    const sw = document.createElement("span");
+    sw.className = "swatch";
+    sw.style.background = nodeColor({ labels: [type] });
+    item.appendChild(sw);
+    item.appendChild(document.createTextNode(type));
     nodeWrap.appendChild(item);
   });
   box.appendChild(nodeWrap);
@@ -627,7 +631,11 @@ function renderLegend(nodes, links) {
   relTypes.forEach(type => {
     const item = document.createElement("div");
     item.className = "legend-item";
-    item.innerHTML = `<span class="line-swatch" style="background:${edgeColor(type)}"></span>${type}`;
+    const sw = document.createElement("span");
+    sw.className = "line-swatch";
+    sw.style.background = edgeColor(type);
+    item.appendChild(sw);
+    item.appendChild(document.createTextNode(type));
     relWrap.appendChild(item);
   });
   box.appendChild(relWrap);
@@ -713,6 +721,17 @@ function bootstrapEvents() {
   document.getElementById("ctxClose").addEventListener("click", () => {
     document.getElementById("ctx").style.display = "none";
   });
+
+  const legendToggle = document.getElementById("legendToggle");
+  const legendDrawer = document.getElementById("legendDrawer");
+  if (legendToggle && legendDrawer) {
+    legendToggle.addEventListener("click", () => {
+      const willOpen = legendDrawer.classList.contains("collapsed");
+      legendDrawer.classList.toggle("collapsed", !willOpen);
+      legendToggle.setAttribute("aria-expanded", willOpen ? "true" : "false");
+      legendToggle.textContent = willOpen ? "Legenda grafu ▼" : "Legenda grafu ▲";
+    });
+  }
 
   window.addEventListener("resize", () => {
     if (currentNodeId) loadGraph(currentNodeId);
