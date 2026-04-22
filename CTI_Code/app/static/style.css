@@ -58,10 +58,57 @@ header input[type="number"] { width: 78px; }
 
 #graph {
   width: 100%;
-  height: calc(100vh - 165px);
+  height: calc(100vh - 255px);
   border: 1px solid var(--border);
   border-radius: 12px;
   background: #fff;
+}
+
+#legend {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #fafbfd;
+  font-size: 12px;
+}
+
+#legend h4 {
+  margin: 2px 0 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.legend-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-bottom: 10px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.swatch {
+  width: 12px;
+  height: 12px;
+  display: inline-block;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  flex: 0 0 auto;
+}
+
+.line-swatch {
+  width: 18px;
+  height: 3px;
+  display: inline-block;
+  border-radius: 6px;
+  flex: 0 0 auto;
 }
 
 .sectionTitle {
@@ -106,6 +153,10 @@ summary {
 }
 
 .item:hover { background: rgba(0, 0, 0, 0.05); }
+.item.selected-item {
+  background: rgba(38, 184, 212, 0.18);
+  font-weight: 700;
+}
 
 .note {
   margin-top: 8px;
