@@ -14,6 +14,7 @@ const LIST_ENDPOINTS = {
   intrusion: "/api/list/intrusion-sets?limit=900",
   attack: "/api/list/attack-patterns?limit=900",
   locations: "/api/list/locations?limit=900",
+  threatclasses: "/api/list/threat-classes?limit=900",
 };
 
 const cache = {
@@ -24,6 +25,7 @@ const cache = {
   intrusion: [],
   attack: [],
   locations: [],
+  threatclasses: [],
 };
 
 function nodeLabel(node) {
@@ -40,6 +42,7 @@ function majorLabel(node) {
   if (labels.includes("IntrusionSet")) return "IntrusionSet";
   if (labels.includes("AttackPattern")) return "AttackPattern";
   if (labels.includes("Location")) return "Location";
+  if (labels.includes("ThreatClass")) return "ThreatClass";
   return labels[0] || "Other";
 }
 
@@ -54,6 +57,7 @@ function nodeColor(node) {
     IntrusionSet: "#26b8d4",
     AttackPattern: "#9ce1e8",
     Location: "#f6c266",
+    ThreatClass: "#ff6b6b",
     Other: "#9aa2b0",
   };
   return map[key] || map.Other;
@@ -112,6 +116,150 @@ function nodeLooksLikeCve(node) {
 function nodeLooksLikeNvt(node) {
   if (!node) return false;
   return hasAnyLabel(node, ["NVT"]);
+}
+
+function nodeLooksLikeAttackPattern(node) {
+  if (!node) return false;
+  return hasAnyLabel(node, ["AttackPattern"]);
+}
+
+function truncateText(value, maxWords = 3) {
+  const txt = String(value || "").trim();
+  if (!txt) return "";
+  const words = txt.split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return txt;
+  return `${words.slice(0, maxWords).join(" ")} ...`;
+}
+
+function formatTagsRawForModal(tagsRaw) {
+  const raw = String(tagsRaw || "");
+  if (!raw) return "";
+  const parts = raw.split("|").map(x => x.trim()).filter(Boolean);
+  const vec = parts.find(x => x.startsWith("cvss_base_vector="));
+  const rest = parts.filter(x => x !== vec);
+  return [vec || "", rest.join("\n")].filter(Boolean).join("\n\n");
+}
+
+function ensureCtxModal() {
+  let modal = document.getElementById("ctxModal");
+  if (modal) return modal;
+
+  modal = document.createElement("dialog");
+  modal.id = "ctxModal";
+  modal.innerHTML = `
+    <div class="ctx-modal-head">
+      <span id="ctxModalTitle">Detail</span>
+      <button class="ctx-modal-close" id="ctxModalClose">×</button>
+    </div>
+    <pre id="ctxModalText"></pre>
+  `;
+  document.body.appendChild(modal);
+  modal.querySelector("#ctxModalClose").addEventListener("click", () => modal.close());
+  return modal;
+}
+
+function openCtxModal(title, text) {
+  const modal = ensureCtxModal();
+  modal.querySelector("#ctxModalTitle").textContent = title;
+  modal.querySelector("#ctxModalText").textContent = String(text || "");
+  modal.showModal();
+}
+
+function addExpandableField(parent, label, value, formatter = (x) => String(x || "")) {
+  const text = formatter(value);
+  if (!text) return;
+
+  const box = document.createElement("div");
+  box.className = "ctx-kv";
+
+  const lbl = document.createElement("b");
+  lbl.textContent = `${label}:`;
+  box.appendChild(lbl);
+
+  const preview = document.createElement("span");
+  const previewText = truncateText(text, 3);
+  preview.textContent = ` ${previewText}`;
+  box.appendChild(preview);
+
+  if (previewText !== text) {
+    const link = document.createElement("a");
+    link.className = "ctx-expand";
+    link.href = "#";
+    link.textContent = "show all";
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      openCtxModal(label, text);
+    });
+    box.appendChild(link);
+  }
+
+  parent.appendChild(box);
+}
+
+function extractAttackPatternUrl(props) {
+  const direct = String(props?.url || "").trim();
+  if (direct) return direct;
+
+  const refs = props?.external_references;
+  if (Array.isArray(refs)) {
+    const hit = refs.find(x => typeof x?.url === "string" && x.url.startsWith("http"));
+    if (hit) return hit.url;
+  }
+  const refsText = String(refs || "");
+  const m = refsText.match(/https?:\/\/attack\.mitre\.org\/[^\s"\\]+/i);
+  return m ? m[0] : "";
+}
+
+function renderContextHighlights(data) {
+  const wrap = document.getElementById("ctxHighlights");
+  wrap.innerHTML = "";
+  const props = data?.props || {};
+  const labels = data?.labels || [];
+
+  if (labels.includes("AttackPattern") || nodeLooksLikeAttackPattern(data)) {
+    const url = extractAttackPatternUrl(props);
+    if (url) {
+      const linkWrap = document.createElement("div");
+      linkWrap.className = "ctx-link";
+      const lbl = document.createElement("b");
+      lbl.textContent = "URL:";
+      linkWrap.appendChild(lbl);
+      linkWrap.appendChild(document.createTextNode(" "));
+      const a = document.createElement("a");
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = url;
+      linkWrap.appendChild(a);
+      wrap.appendChild(linkWrap);
+    }
+  }
+
+  if (labels.includes("NVT") || nodeLooksLikeNvt(data)) {
+    const cvss = String(props.cvss_base || "").trim();
+    const family = String(props.family || "").trim();
+    if (cvss || family) {
+      const kv = document.createElement("div");
+      kv.className = "ctx-kv";
+      if (cvss) {
+        const cvssLbl = document.createElement("b");
+        cvssLbl.textContent = "CVSS:";
+        kv.appendChild(cvssLbl);
+        kv.appendChild(document.createTextNode(` ${cvss}`));
+      }
+      if (family) {
+        if (cvss) kv.appendChild(document.createElement("br"));
+        const famLbl = document.createElement("b");
+        famLbl.textContent = "Family:";
+        kv.appendChild(famLbl);
+        kv.appendChild(document.createTextNode(` ${family}`));
+      }
+      wrap.appendChild(kv);
+    }
+    addExpandableField(wrap, "SOLUTION", props.solution);
+    addExpandableField(wrap, "Summary", props.summary);
+    addExpandableField(wrap, "Tags_Raw", props.tags_raw, formatTagsRawForModal);
+  }
 }
 
 function resolveAnchorIds(nodes, selectedNodeId, mode) {
@@ -183,12 +331,16 @@ function filterGraphForFocusedPath(rawData, selectedNodeId, hops, selectionKind)
   const actorIds = new Set([...intrusionIds, ...malwareIds]);
   const attackIds = collectNeighborsByLabel(adj, nodesById, actorIds, ["AttackPattern"]);
   const locationIds = collectNeighborsByLabel(adj, nodesById, actorIds, ["Location"]);
+  const threatIds = collectNeighborsByLabel(adj, nodesById, ctiSeed, ["ThreatClass"]);
+  const hostFromThreat = collectNeighborsByLabel(adj, nodesById, threatIds, ["Host"]);
+  for (const id of hostFromThreat) hostIds.add(id);
 
   [
     intrusionIds,
     malwareIds,
     attackIds,
     locationIds,
+    threatIds,
   ].forEach(setRef => {
     for (const id of setRef) keep.add(id);
   });
@@ -203,12 +355,16 @@ function filterGraphForFocusedPath(rawData, selectedNodeId, hops, selectionKind)
     const inAct = inIntr || inMal;
     const inAtt = inSet(attackIds, a) || inSet(attackIds, b);
     const inLoc = inSet(locationIds, a) || inSet(locationIds, b);
+    const inThreat = inSet(threatIds, a) || inSet(threatIds, b);
 
     if (inHost && inCve) return true; // Host <-> CVE
     if (inHost && inNvt) return true; // Host <-> NVT (kvůli scan vazbě)
+    if (inHost && inThreat) return true; // Host <-> ThreatClass
     if (inCve && inNvt) return true;  // CVE <-> NVT
     if (inCve && inAct) return true;  // CVE <-> IntrusionSet/Malware
+    if (inCve && inThreat) return true; // CVE <-> ThreatClass
     if (inNvt && inAct) return true;  // NVT <-> IntrusionSet/Malware
+    if (inNvt && inThreat) return true; // NVT <-> ThreatClass
     if (inAct && inAtt) return true;  // Actor <-> AttackPattern
     if (inAct && inLoc) return true;  // Actor <-> Location
     return false;
@@ -421,18 +577,23 @@ async function loadList(kind) {
 
 async function openCtx(node) {
   const panel = document.getElementById("ctx");
+  const propsEl = document.getElementById("ctxProps");
   panel.style.display = "block";
 
   document.getElementById("ctxTitle").textContent = nodeLabel(node);
   document.getElementById("ctxMeta").textContent = `${(node.labels || []).join(", ")} | id=${node.id}`;
-  document.getElementById("ctxProps").textContent = "Loading...";
+  document.getElementById("ctxHighlights").innerHTML = "";
+  propsEl.classList.remove("nvt-compact");
+  propsEl.textContent = "Loading...";
   document.getElementById("ctxNeigh").innerHTML = "Loading...";
 
   try {
     const data = await apiJson(`/api/node?id=${encodeURIComponent(node.id)}&neigh_limit=120`);
     document.getElementById("ctxTitle").textContent = nodeLabel(data);
     document.getElementById("ctxMeta").textContent = `${(data.labels || []).join(", ")} | id=${data.id}`;
-    document.getElementById("ctxProps").textContent = JSON.stringify(data.props || {}, null, 2);
+    renderContextHighlights(data);
+    if (nodeLooksLikeNvt(data)) propsEl.classList.add("nvt-compact");
+    propsEl.textContent = JSON.stringify(data.props || {}, null, 2);
 
     const neigh = document.getElementById("ctxNeigh");
     neigh.innerHTML = "";
@@ -446,7 +607,7 @@ async function openCtx(node) {
       neigh.appendChild(div);
     });
   } catch (err) {
-    document.getElementById("ctxProps").textContent = err.message;
+    propsEl.textContent = err.message;
     document.getElementById("ctxNeigh").innerHTML = "";
   }
 }
@@ -482,6 +643,7 @@ async function bootstrap() {
     loadList("intrusion"),
     loadList("attack"),
     loadList("locations"),
+    loadList("threatclasses"),
   ]);
 
 

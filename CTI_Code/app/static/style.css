@@ -138,5 +138,74 @@ summary {
 
 #ctxTitle { font-weight: 700; }
 #ctxMeta { font-size: 12px; opacity: .8; margin: 4px 0 8px; }
-#ctxProps { font-size: 12px; white-space: pre-wrap; background: #f4f5f7; padding: 8px; border-radius: 8px; }
+#ctxHighlights { margin-bottom: 6px; }
+.ctx-kv {
+  font-size: 12px;
+  background: #f4f5f7;
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 6px;
+}
+.ctx-kv b {
+  display: inline-block;
+  min-width: 68px;
+}
+.ctx-link {
+  font-size: 12px;
+  word-break: break-all;
+  margin-bottom: 8px;
+}
+.ctx-expand {
+  display: block;
+  margin-top: 5px;
+  color: #0056d6;
+  cursor: pointer;
+  text-decoration: underline;
+  font-weight: 600;
+}
+#ctxProps {
+  font-size: 12px;
+  white-space: pre-wrap;
+  background: #f4f5f7;
+  padding: 8px;
+  border-radius: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+#ctxProps.nvt-compact {
+  max-height: 140px;
+}
 #ctxNeigh { font-size: 12px; }
+
+#ctxModal {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0;
+  width: min(760px, 94vw);
+}
+#ctxModal::backdrop {
+  background: rgba(0, 0, 0, 0.38);
+}
+.ctx-modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+}
+.ctx-modal-close {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 18px;
+}
+#ctxModalText {
+  margin: 0;
+  padding: 10px;
+  white-space: pre-wrap;
+  max-height: 66vh;
+  overflow: auto;
+  font-size: 12px;
+  background: #f7f7f8;
+}
