@@ -444,6 +444,7 @@ def main() -> None:
                 f"nvt={reconciled['fixed_nvt']} hosts_fixed={reconciled['fixed_hosts']}"
             )
 
+
             backfilled = ensure_every_nvt_has_threat_class(session)
             print(
                 "[THREAT] backfilled_unclassified "
