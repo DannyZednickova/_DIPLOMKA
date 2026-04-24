@@ -14,6 +14,7 @@
           .sub { color: #5e6b7e; margin: 6px 0 14px; }
           .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
           .toolbar input, .toolbar select { padding: 8px 10px; border: 1px solid #c9d4e4; border-radius: 9px; }
+          .toolbar label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #435066; }
           section { background: #fff; border: 1px solid #dce5f0; border-radius: 12px; margin-bottom: 14px; overflow: hidden; }
           h2 { margin: 0; padding: 10px 12px; background: #ecf2fb; border-bottom: 1px solid #dce5f0; font-size: 16px; }
           table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -39,6 +40,22 @@
               <option value="top-threat">Top threat classes</option>
               <option value="cti-corr">CTI korelace</option>
             </select>
+            <input id="hostFilter" type="search" placeholder="Host IP..." />
+            <input id="threatFilter" type="search" placeholder="Threat class..." />
+            <input id="cveFilter" type="search" placeholder="CVE..." />
+            <select id="severityFilter">
+              <option value="all">Severity: vše</option>
+              <option value="high">Severity: high+ (>= 7.0)</option>
+              <option value="critical">Severity: critical (>= 9.0)</option>
+            </select>
+            <select id="relationFilter">
+              <option value="all">Relace: všechny</option>
+              <option value="USES">USES</option>
+              <option value="TARGETS">TARGETS</option>
+              <option value="EXPLOITS">EXPLOITS</option>
+              <option value="RELATED_TO">RELATED_TO</option>
+            </select>
+            <label><input id="onlyNonZero" type="checkbox" /> jen řádky s nenulovou hodnotou</label>
           </div>
 
           <section data-group="host-summary">
@@ -170,6 +187,12 @@
           (function () {
             const q = document.getElementById('globalFilter');
             const sel = document.getElementById('tableSelect');
+            const hostFilter = document.getElementById('hostFilter');
+            const threatFilter = document.getElementById('threatFilter');
+            const cveFilter = document.getElementById('cveFilter');
+            const severityFilter = document.getElementById('severityFilter');
+            const relationFilter = document.getElementById('relationFilter');
+            const onlyNonZero = document.getElementById('onlyNonZero');
             const sections = Array.from(document.querySelectorAll('section[data-group]'));
             const emptyState = document.createElement('div');
             emptyState.className = 'muted';
@@ -196,6 +219,12 @@
             function apply() {
               const needle = (q.value || '').toLowerCase().trim();
               const group = sel.value;
+              const hostNeedle = (hostFilter.value || '').toLowerCase().trim();
+              const threatNeedle = (threatFilter.value || '').toLowerCase().trim();
+              const cveNeedle = (cveFilter.value || '').toLowerCase().trim();
+              const sevMode = severityFilter.value;
+              const relationMode = relationFilter.value;
+              const onlyNonZeroRows = !!onlyNonZero.checked;
               let anyVisibleRows = false;
 
               sections.forEach((section) => {
@@ -205,7 +234,64 @@
                 if (!visible) return;
 
                 section.querySelectorAll('tbody tr').forEach((row) => {
-                  row.style.display = !needle || row.textContent.toLowerCase().includes(needle) ? '' : 'none';
+                  const txt = row.textContent.toLowerCase();
+                  const cells = Array.from(row.children).map((c) => c.textContent.trim());
+
+                  const matchesGlobal = !needle || txt.includes(needle);
+
+                  let matchesHost = true;
+                  if (hostNeedle) {
+                    if (section.dataset.group === 'host-summary' || section.dataset.group === 'host-threat') {
+                      matchesHost = (cells[0] || '').toLowerCase().includes(hostNeedle);
+                    } else if (section.dataset.group === 'top-threat') {
+                      matchesHost = (cells[4] || '').toLowerCase().includes(hostNeedle);
+                    }
+                  }
+
+                  let matchesThreat = true;
+                  if (threatNeedle) {
+                    if (section.dataset.group === 'host-threat' || section.dataset.group === 'top-threat') {
+                      matchesThreat = (cells[1] || cells[0] || '').toLowerCase().includes(threatNeedle);
+                    }
+                  }
+
+                  let matchesCve = true;
+                  if (cveNeedle) {
+                    if (section.dataset.group === 'top-cve' || section.dataset.group === 'cti-corr') {
+                      matchesCve = (cells[0] || '').toLowerCase().includes(cveNeedle);
+                    } else if (section.dataset.group === 'host-summary') {
+                      matchesCve = (cells[2] || '').toLowerCase().includes(cveNeedle);
+                    }
+                  }
+
+                  let matchesSeverity = true;
+                  if (sevMode !== 'all') {
+                    const sevIdx =
+                      section.dataset.group === 'host-summary' ? 4 :
+                      section.dataset.group === 'host-threat' ? 4 : -1;
+                    if (sevIdx >= 0) {
+                      const sev = parseFloat((cells[sevIdx] || '0').replace(',', '.')) || 0;
+                      if (sevMode === 'high') matchesSeverity = sev >= 7.0;
+                      if (sevMode === 'critical') matchesSeverity = sev >= 9.0;
+                    }
+                  }
+
+                  let matchesRelation = true;
+                  if (relationMode !== 'all') {
+                    if (section.dataset.group === 'cti-corr') {
+                      matchesRelation = (cells[2] || '').toUpperCase() === relationMode;
+                    }
+                  }
+
+                  let matchesNonZero = true;
+                  if (onlyNonZeroRows) {
+                    const nums = cells
+                      .map((v) => parseFloat(String(v).replace(',', '.')))
+                      .filter((v) => Number.isFinite(v));
+                    matchesNonZero = nums.length === 0 ? true : nums.some((v) => v > 0);
+                  }
+
+                  row.style.display = (matchesGlobal &amp;&amp; matchesHost &amp;&amp; matchesThreat &amp;&amp; matchesCve &amp;&amp; matchesSeverity &amp;&amp; matchesRelation &amp;&amp; matchesNonZero) ? '' : 'none';
                 });
                 if (visibleRowsInSection(section) > 0) anyVisibleRows = true;
               });
@@ -223,6 +309,12 @@
             if (!sel.querySelector(`option[value=\"${sel.value}\"]`)) sel.value = 'all';
             q.addEventListener('input', apply);
             sel.addEventListener('change', apply);
+            hostFilter.addEventListener('input', apply);
+            threatFilter.addEventListener('input', apply);
+            cveFilter.addEventListener('input', apply);
+            severityFilter.addEventListener('change', apply);
+            relationFilter.addEventListener('change', apply);
+            onlyNonZero.addEventListener('change', apply);
             apply();
           })();
         </script>
