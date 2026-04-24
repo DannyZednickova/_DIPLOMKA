@@ -128,13 +128,17 @@ def report_xml():
 
     top_cves = safe_rows(
         """
-        MATCH (h:Host)-[:HAS_NVT]->(nvt:NVT)-[:REFERS_TO]->(c:CVE)
+        MATCH (c:CVE)
+        OPTIONAL MATCH (h1:Host)-[:VULNERABLE_TO]->(c)
+        OPTIONAL MATCH (h2:Host)-[:HAS_NVT]->(nvt:NVT)-[nvtRel]->(c)
+        WHERE type(nvtRel) IN ['REFERS_TO', 'HAS_CVE', 'RELATED_TO', 'DETECTS', 'INDICATES_THREAT']
         OPTIONAL MATCH (c)-[rel]-(ctx)
         WHERE any(l IN labels(ctx) WHERE l IN ['Malware', 'IntrusionSet', 'AttackPattern'])
         WITH c,
-             count(DISTINCT h) AS affected_hosts,
+             count(DISTINCT h1) + count(DISTINCT h2) AS affected_hosts,
              count(DISTINCT nvt) AS nvt_ref_count,
              collect(DISTINCT coalesce(ctx.name, ctx.title, ctx.cve, elementId(ctx))) AS contexts
+        WHERE affected_hosts > 0 OR nvt_ref_count > 0 OR size(contexts) > 0
         RETURN
           coalesce(c.cve, c.name, elementId(c)) AS cve,
           affected_hosts,
@@ -166,10 +170,15 @@ def report_xml():
 
     cti_correlation = safe_rows(
         """
-        MATCH (h:Host)-[:HAS_NVT]->(:NVT)-[:REFERS_TO]->(c:CVE)
-        WITH c, count(DISTINCT h) AS local_hosts
+        MATCH (c:CVE)
+        OPTIONAL MATCH (h1:Host)-[:VULNERABLE_TO]->(c)
+        OPTIONAL MATCH (h2:Host)-[:HAS_NVT]->(:NVT)-[nvtRel]->(c)
+        WHERE type(nvtRel) IN ['REFERS_TO', 'HAS_CVE', 'RELATED_TO', 'DETECTS', 'INDICATES_THREAT']
+        WITH c, count(DISTINCT h1) + count(DISTINCT h2) AS local_hosts
         OPTIONAL MATCH (c)-[rel]-(ctx)
         WHERE any(l IN labels(ctx) WHERE l IN ['Malware', 'IntrusionSet', 'AttackPattern'])
+        WITH c, local_hosts, rel, ctx
+        WHERE local_hosts > 0 AND ctx IS NOT NULL
         RETURN
           coalesce(c.cve, c.name, elementId(c)) AS cve,
           coalesce(ctx.name, ctx.title, ctx.cve, elementId(ctx)) AS linked_entity,

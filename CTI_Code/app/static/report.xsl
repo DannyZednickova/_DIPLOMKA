@@ -171,12 +171,35 @@
             const q = document.getElementById('globalFilter');
             const sel = document.getElementById('tableSelect');
             const sections = Array.from(document.querySelectorAll('section[data-group]'));
+            const emptyState = document.createElement('div');
+            emptyState.className = 'muted';
+            emptyState.style.marginTop = '10px';
+            emptyState.textContent = 'V reportu aktuálně nejsou data pro vybrané tabulky.';
+            let hasAppendedEmpty = false;
+
+            function visibleRowsInSection(section) {
+              return Array.from(section.querySelectorAll('tbody tr')).filter((row) => row.style.display !== 'none').length;
+            }
+
+            function removeEmptySectionsFromDropdown() {
+              sections.forEach((section) => {
+                const rows = section.querySelectorAll('tbody tr').length;
+                const option = sel.querySelector(`option[value=\"${section.dataset.group}\"]`);
+                if (!option) return;
+                if (rows === 0) {
+                  option.remove();
+                  section.remove();
+                }
+              });
+            }
 
             function apply() {
               const needle = (q.value || '').toLowerCase().trim();
               const group = sel.value;
+              let anyVisibleRows = false;
 
               sections.forEach((section) => {
+                if (!section.isConnected) return;
                 const visible = group === 'all' || section.dataset.group === group;
                 section.style.display = visible ? '' : 'none';
                 if (!visible) return;
@@ -184,9 +207,20 @@
                 section.querySelectorAll('tbody tr').forEach((row) => {
                   row.style.display = !needle || row.textContent.toLowerCase().includes(needle) ? '' : 'none';
                 });
+                if (visibleRowsInSection(section) > 0) anyVisibleRows = true;
               });
+
+              if (!anyVisibleRows &amp;&amp; !hasAppendedEmpty) {
+                document.querySelector('.wrap').appendChild(emptyState);
+                hasAppendedEmpty = true;
+              } else if (anyVisibleRows &amp;&amp; hasAppendedEmpty) {
+                emptyState.remove();
+                hasAppendedEmpty = false;
+              }
             }
 
+            removeEmptySectionsFromDropdown();
+            if (!sel.querySelector(`option[value=\"${sel.value}\"]`)) sel.value = 'all';
             q.addEventListener('input', apply);
             sel.addEventListener('change', apply);
             apply();
