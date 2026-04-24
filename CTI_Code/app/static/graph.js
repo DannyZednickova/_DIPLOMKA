@@ -790,6 +790,7 @@ function drawGraph(data) {
     .data(nodes)
     .join("text")
     .text(d => nodeLabel(d))
+    .style("cursor", "pointer")
     .attr("display", d => currentPathMode === "hostPaths" && !d.__focus ? "none" : null)
     .attr("font-size", d => d.id === currentNodeId ? 12 : 10)
     .attr("font-weight", d => d.id === currentNodeId ? 800 : 500)
@@ -840,6 +841,12 @@ function drawGraph(data) {
       return;
     }
     await openCtx(d);
+  });
+
+  text.on("click", async (event, d) => {
+    event.stopPropagation();
+    currentSelectionKind = null;
+    await loadGraph(d.id);
   });
 
   svg.call(

@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from typing import Dict
+import logging
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
@@ -14,6 +15,7 @@ NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASS = os.getenv("NEO4J_PASS", "CHANGE_ME")
 NEO4J_DB = os.getenv("NEO4J_DB", "neo4j")
+NEO4J_CONNECT_TIMEOUT = float(os.getenv("NEO4J_CONNECT_TIMEOUT", "5"))
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -22,21 +24,42 @@ INDEX_HTML = STATIC_DIR / "index.html"
 app = FastAPI(title="CTI Graph UI")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
+logger = logging.getLogger(__name__)
+driver = None
+
+
+def get_driver():
+    global driver
+    if driver is None:
+        driver = GraphDatabase.driver(
+            NEO4J_URI,
+            auth=(NEO4J_USER, NEO4J_PASS),
+            connection_timeout=NEO4J_CONNECT_TIMEOUT,
+        )
+    return driver
 
 
 def run(query: str, **params):
     try:
-        with driver.session(database=NEO4J_DB) as session:
+        with get_driver().session(database=NEO4J_DB) as session:
             return list(session.run(query, **params))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.on_event("startup")
+def _startup():
+    try:
+        get_driver().verify_connectivity()
+    except Exception as exc:
+        logger.warning("Neo4j connectivity check failed on startup: %s", exc)
+
+
 @app.on_event("shutdown")
 def _shutdown():
     try:
-        driver.close()
+        if driver is not None:
+            driver.close()
     except Exception:
         pass
 
