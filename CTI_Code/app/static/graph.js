@@ -306,6 +306,21 @@ function resolveAnchorIds(nodes, selectedNodeId, mode) {
   return out;
 }
 
+function resolveSelectedNodeId(nodes, selectedNodeId) {
+  const needle = String(selectedNodeId || "").trim().toUpperCase();
+  if (!needle) return null;
+  const exact = nodes.find(n =>
+    String(n.id || "").trim().toUpperCase() === needle ||
+    String(n.title || "").trim().toUpperCase() === needle
+  );
+  if (exact) return exact.id;
+  const prefix = nodes.find(n =>
+    String(n.id || "").trim().toUpperCase().startsWith(needle) ||
+    String(n.title || "").trim().toUpperCase().startsWith(needle)
+  );
+  return prefix ? prefix.id : null;
+}
+
 function edgeKey(a, b) {
   return `${a}::${b}`;
 }
@@ -317,7 +332,10 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
   if (!nodes.length || !edges.length) return rawData;
 
   const nodesById = new Map(nodes.map(n => [n.id, n]));
-  const selected = nodesById.get(selectedNodeId);
+  const resolvedSelectedId = nodesById.has(selectedNodeId)
+    ? selectedNodeId
+    : resolveSelectedNodeId(nodes, selectedNodeId);
+  const selected = nodesById.get(resolvedSelectedId);
   if (!selected || hasAnyLabel(selected, ["Host"])) return rawData;
 
   const adj = new Map();
@@ -331,9 +349,9 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
     addAdj(e.target, e.source);
   }
 
-  const dist = new Map([[selectedNodeId, 0]]);
+  const dist = new Map([[resolvedSelectedId, 0]]);
   const parents = new Map();
-  const q = [selectedNodeId];
+  const q = [resolvedSelectedId];
   for (let i = 0; i < q.length; i++) {
     const u = q[i];
     const d = dist.get(u);
@@ -360,11 +378,11 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
     .slice(0, 10);
   if (!selectedHosts.length) return rawData;
 
-  const focusNodes = new Set([selectedNodeId]);
+  const focusNodes = new Set([resolvedSelectedId]);
   const focusEdges = new Set();
   const backtrack = (nodeId) => {
     focusNodes.add(nodeId);
-    if (nodeId === selectedNodeId) return;
+    if (nodeId === resolvedSelectedId) return;
     for (const p of parents.get(nodeId) || []) {
       focusNodes.add(p);
       focusEdges.add(edgeKey(p, nodeId));
@@ -687,7 +705,9 @@ async function loadGraph(nodeId) {
     const url = `/api/graph?node_id=${encodeURIComponent(nodeId)}&hops=${hops}&max_nodes=${maxNodes}&max_edges=${maxEdges}`;
     const data = await apiJson(url);
     const hostFiltered = filterGraphForHostPaths(data, nodeId, currentPathMode);
-    const filtered = filterGraphForFocusedPath(hostFiltered, nodeId, hops, currentSelectionKind);
+    const filtered = currentPathMode === "hostPaths"
+      ? hostFiltered
+      : filterGraphForFocusedPath(hostFiltered, nodeId, hops, currentSelectionKind);
     drawGraph(filtered);
     refreshListHighlights();
   } catch (err) {
