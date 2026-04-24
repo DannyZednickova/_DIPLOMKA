@@ -161,6 +161,20 @@ function formatTagsRawForModal(tagsRaw) {
   return [vec || "", rest.join("\n")].filter(Boolean).join("\n\n");
 }
 
+function parseExternalReferences(rawValue) {
+  if (!rawValue) return [];
+  if (Array.isArray(rawValue)) return rawValue;
+  if (typeof rawValue === "string") {
+    try {
+      const parsed = JSON.parse(rawValue);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
+    }
+  }
+  return [];
+}
+
 function ensureCtxModal() {
   let modal = document.getElementById("ctxModal");
   if (modal) return modal;
@@ -280,6 +294,78 @@ function renderContextHighlights(data) {
     addExpandableField(wrap, "SOLUTION", props.solution);
     addExpandableField(wrap, "Summary", props.summary);
     addExpandableField(wrap, "Tags_Raw", props.tags_raw, formatTagsRawForModal);
+  }
+
+  if (labels.includes("CVE") || labels.includes("Vulnerability") || nodeLooksLikeCve(data)) {
+    const cveScore = props.x_opencti_cvss_base_score ?? props.cvss_base_score ?? props.cvss_base;
+    const severity = props.x_opencti_cvss_base_severity ?? props.cvss_severity ?? "";
+    const vector = props.x_opencti_cvss_vector_string ?? props.cvss_vector ?? "";
+    const attackVector = props.x_opencti_cvss_attack_vector ?? "";
+    const attackComplexity = props.x_opencti_cvss_attack_complexity ?? "";
+    const privs = props.x_opencti_cvss_privileges_required ?? "";
+    const ui = props.x_opencti_cvss_user_interaction ?? "";
+    const kev = props.x_opencti_cisa_kev;
+
+    if (cveScore || severity || vector) {
+      const kv = document.createElement("div");
+      kv.className = "ctx-kv";
+      if (cveScore !== undefined && cveScore !== null && String(cveScore).trim() !== "") {
+        const scoreLbl = document.createElement("b");
+        scoreLbl.textContent = "CVSS:";
+        kv.appendChild(scoreLbl);
+        kv.appendChild(document.createTextNode(` ${cveScore}`));
+      }
+      if (severity) {
+        kv.appendChild(document.createElement("br"));
+        const sevLbl = document.createElement("b");
+        sevLbl.textContent = "Severity:";
+        kv.appendChild(sevLbl);
+        kv.appendChild(document.createTextNode(` ${severity}`));
+      }
+      if (vector) {
+        kv.appendChild(document.createElement("br"));
+        const vecLbl = document.createElement("b");
+        vecLbl.textContent = "Vector:";
+        kv.appendChild(vecLbl);
+        kv.appendChild(document.createTextNode(` ${vector}`));
+      }
+      wrap.appendChild(kv);
+    }
+
+    const aspects = [
+      ["Attack vector", attackVector],
+      ["Complexity", attackComplexity],
+      ["Privileges", privs],
+      ["User interaction", ui],
+      ["CISA KEV", kev === true ? "YES" : (kev === false ? "NO" : "")],
+    ]
+      .filter(([, value]) => String(value || "").trim())
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("\n");
+    addExpandableField(wrap, "CVSS detail", aspects);
+    addExpandableField(wrap, "Description", props.description);
+
+    const refs = parseExternalReferences(props.external_references);
+    if (refs.length) {
+      const refsWrap = document.createElement("div");
+      refsWrap.className = "ctx-kv";
+      const lbl = document.createElement("b");
+      lbl.textContent = "References:";
+      refsWrap.appendChild(lbl);
+
+      refs.slice(0, 4).forEach((r) => {
+        const url = String(r?.url || "").trim();
+        if (!url) return;
+        refsWrap.appendChild(document.createElement("br"));
+        const a = document.createElement("a");
+        a.href = url;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = String(r?.external_id || r?.source_name || url);
+        refsWrap.appendChild(a);
+      });
+      wrap.appendChild(refsWrap);
+    }
   }
 }
 
@@ -820,6 +906,7 @@ async function openCtx(node) {
   document.getElementById("ctxMeta").textContent = `${(node.labels || []).join(", ")} | id=${node.id}`;
   document.getElementById("ctxHighlights").innerHTML = "";
   propsEl.classList.remove("nvt-compact");
+  propsEl.classList.remove("cve-compact");
   propsEl.textContent = "Loading...";
   document.getElementById("ctxNeigh").innerHTML = "Loading...";
 
@@ -829,6 +916,7 @@ async function openCtx(node) {
     document.getElementById("ctxMeta").textContent = `${(data.labels || []).join(", ")} | id=${data.id}`;
     renderContextHighlights(data);
     if (nodeLooksLikeNvt(data)) propsEl.classList.add("nvt-compact");
+    if (nodeLooksLikeCve(data)) propsEl.classList.add("cve-compact");
     propsEl.textContent = JSON.stringify(data.props || {}, null, 2);
 
     const neigh = document.getElementById("ctxNeigh");

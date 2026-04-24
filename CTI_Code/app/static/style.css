@@ -214,6 +214,8 @@ summary {
   border-radius: 8px;
   padding: 8px;
   margin-bottom: 6px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .ctx-kv b {
   display: inline-block;
@@ -235,6 +237,8 @@ summary {
 #ctxProps {
   font-size: 12px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   background: #f4f5f7;
   padding: 8px;
   border-radius: 8px;
@@ -243,6 +247,9 @@ summary {
 }
 #ctxProps.nvt-compact {
   max-height: 140px;
+}
+#ctxProps.cve-compact {
+  max-height: 150px;
 }
 #ctxNeigh { font-size: 12px; }
 
