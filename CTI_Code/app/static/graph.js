@@ -424,16 +424,18 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
   const selected = nodesById.get(resolvedSelectedId);
   if (!selected || hasAnyLabel(selected, ["Host"])) return rawData;
 
-  const adj = new Map();
-  const addAdj = (a, b) => {
-    if (!adj.has(a)) adj.set(a, []);
-    adj.get(a).push(b);
-  };
+  const adj = buildAdjacency(edges);
+  const edgeExists = new Set();
   for (const e of edges) {
-    if (!e?.source || !e?.target) continue;
-    addAdj(e.source, e.target);
-    addAdj(e.target, e.source);
+    edgeExists.add(edgeKey(e.source, e.target));
+    edgeExists.add(edgeKey(e.target, e.source));
   }
+  const addFocusEdge = (a, b) => {
+    if (!a || !b) return;
+    if (!edgeExists.has(edgeKey(a, b))) return;
+    focusEdges.add(edgeKey(a, b));
+    focusEdges.add(edgeKey(b, a));
+  };
 
   const dist = new Map([[resolvedSelectedId, 0]]);
   const parents = new Map();
@@ -441,7 +443,8 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
   for (let i = 0; i < q.length; i++) {
     const u = q[i];
     const d = dist.get(u);
-    for (const v of adj.get(u) || []) {
+    for (const n of adj.get(u) || []) {
+      const v = n.otherId;
       if (!dist.has(v)) {
         dist.set(v, d + 1);
         parents.set(v, new Set([u]));
@@ -453,13 +456,13 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
     }
   }
 
-  const hostIds = nodes
+  const hostReachableIds = nodes
     .filter(n => hasAnyLabel(n, ["Host"]) && dist.has(n.id))
     .map(n => n.id);
-  if (!hostIds.length) return rawData;
+  if (!hostReachableIds.length) return rawData;
 
-  const minHostDist = Math.min(...hostIds.map(id => dist.get(id)).filter(Number.isFinite));
-  const selectedHosts = hostIds
+  const minHostDist = Math.min(...hostReachableIds.map(id => dist.get(id)).filter(Number.isFinite));
+  const selectedHosts = hostReachableIds
     .filter(id => dist.get(id) === minHostDist)
     .slice(0, 10);
   if (!selectedHosts.length) return rawData;
@@ -471,30 +474,140 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
     if (nodeId === resolvedSelectedId) return;
     for (const p of parents.get(nodeId) || []) {
       focusNodes.add(p);
-      focusEdges.add(edgeKey(p, nodeId));
-      focusEdges.add(edgeKey(nodeId, p));
+      addFocusEdge(p, nodeId);
       backtrack(p);
     }
   };
   for (const hid of selectedHosts) backtrack(hid);
   const corePathNodes = new Set(focusNodes);
 
-  const ctiSeed = [...corePathNodes].filter(id => {
-    const n = nodesById.get(id);
-    return hasAnyLabel(n, ["CVE", "Vulnerability", "NVT"]);
-  });
-  const auxThreat = new Set();
-  for (const sid of ctiSeed) {
-    for (const nid of adj.get(sid) || []) {
+  const cveIds = new Set();
+  const nvtIds = new Set();
+  const threatIds = new Set();
+  const actorIds = new Set();
+  const attackIds = new Set();
+  const locationIds = new Set();
+  const hostIds = new Set(selectedHosts);
+
+  const addByLabel = (nodeId) => {
+    const node = nodesById.get(nodeId);
+    if (!node) return;
+    if (hasAnyLabel(node, ["CVE", "Vulnerability"])) cveIds.add(nodeId);
+    if (hasAnyLabel(node, ["NVT"])) nvtIds.add(nodeId);
+    if (hasAnyLabel(node, ["ThreatClass"])) threatIds.add(nodeId);
+    if (hasAnyLabel(node, ["Malware", "IntrusionSet"])) actorIds.add(nodeId);
+    if (hasAnyLabel(node, ["AttackPattern"])) attackIds.add(nodeId);
+    if (hasAnyLabel(node, ["Location"])) locationIds.add(nodeId);
+    if (hasAnyLabel(node, ["Host"])) hostIds.add(nodeId);
+  };
+
+  for (const id of corePathNodes) addByLabel(id);
+  addByLabel(resolvedSelectedId);
+
+  // 1) Triáda ThreatClass <-> (CVE|NVT) + CVE <-> NVT
+  const ctiSeed = new Set([...cveIds, ...nvtIds]);
+  const threatSeed = new Set(threatIds);
+  if (hasAnyLabel(selected, ["ThreatClass"])) threatSeed.add(resolvedSelectedId);
+
+  for (const sid of [...ctiSeed, ...threatSeed]) {
+    for (const n of adj.get(sid) || []) {
+      const nid = n.otherId;
       const neigh = nodesById.get(nid);
+      if (!neigh) continue;
+      if (hasAnyLabel(neigh, ["CVE", "Vulnerability"])) {
+        cveIds.add(nid);
+        addFocusEdge(sid, nid);
+      }
+      if (hasAnyLabel(neigh, ["NVT"])) {
+        nvtIds.add(nid);
+        addFocusEdge(sid, nid);
+      }
       if (hasAnyLabel(neigh, ["ThreatClass"])) {
-        auxThreat.add(nid);
-        focusEdges.add(edgeKey(sid, nid));
-        focusEdges.add(edgeKey(nid, sid));
+        threatIds.add(nid);
+        addFocusEdge(sid, nid);
       }
     }
   }
-  for (const tid of auxThreat) focusNodes.add(tid);
+
+  // 2) Z CTI uzlů vytáhneme aktéry a zpět navázané CTI
+  const ctiExpanded = new Set([...cveIds, ...nvtIds, ...threatIds]);
+  for (const sid of ctiExpanded) {
+    for (const n of adj.get(sid) || []) {
+      const nid = n.otherId;
+      const neigh = nodesById.get(nid);
+      if (!neigh) continue;
+      if (hasAnyLabel(neigh, ["Malware", "IntrusionSet"])) {
+        actorIds.add(nid);
+        addFocusEdge(sid, nid);
+      }
+      if (hasAnyLabel(neigh, ["Host"])) {
+        hostIds.add(nid);
+        addFocusEdge(sid, nid);
+      }
+    }
+  }
+
+  // 3) Z aktérů navážeme AttackPattern + Location a udržíme CTI mezikrok
+  for (const aid of actorIds) {
+    for (const n of adj.get(aid) || []) {
+      const nid = n.otherId;
+      const neigh = nodesById.get(nid);
+      if (!neigh) continue;
+      if (hasAnyLabel(neigh, ["AttackPattern"])) {
+        attackIds.add(nid);
+        addFocusEdge(aid, nid);
+      }
+      if (hasAnyLabel(neigh, ["Location"])) {
+        locationIds.add(nid);
+        addFocusEdge(aid, nid);
+      }
+      if (hasAnyLabel(neigh, ["CVE", "Vulnerability"])) {
+        cveIds.add(nid);
+        addFocusEdge(aid, nid);
+      }
+      if (hasAnyLabel(neigh, ["NVT"])) {
+        nvtIds.add(nid);
+        addFocusEdge(aid, nid);
+      }
+    }
+  }
+
+  // 4) Pokud je vybraný Location/AttackPattern, přes aktéry dotáhneme CTI vazby.
+  if (hasAnyLabel(selected, ["Location", "AttackPattern"])) {
+    for (const n of adj.get(resolvedSelectedId) || []) {
+      const aid = n.otherId;
+      const actor = nodesById.get(aid);
+      if (!actor || !hasAnyLabel(actor, ["Malware", "IntrusionSet"])) continue;
+      actorIds.add(aid);
+      addFocusEdge(resolvedSelectedId, aid);
+      for (const back of adj.get(aid) || []) {
+        const rid = back.otherId;
+        const relNode = nodesById.get(rid);
+        if (!relNode) continue;
+        if (hasAnyLabel(relNode, ["CVE", "Vulnerability"])) cveIds.add(rid);
+        if (hasAnyLabel(relNode, ["NVT"])) nvtIds.add(rid);
+        if (hasAnyLabel(relNode, ["ThreatClass"])) threatIds.add(rid);
+        if (hasAnyLabel(relNode, ["Host"])) hostIds.add(rid);
+        if (
+          hasAnyLabel(relNode, ["CVE", "Vulnerability", "NVT", "ThreatClass", "Host", "AttackPattern", "Location"])
+        ) {
+          addFocusEdge(aid, rid);
+        }
+      }
+    }
+  }
+
+  for (const id of [
+    ...cveIds,
+    ...nvtIds,
+    ...threatIds,
+    ...actorIds,
+    ...attackIds,
+    ...locationIds,
+    ...hostIds,
+  ]) {
+    focusNodes.add(id);
+  }
 
   return {
     ...rawData,
