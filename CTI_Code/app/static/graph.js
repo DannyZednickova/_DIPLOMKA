@@ -438,7 +438,7 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
   };
 
   const dist = new Map([[resolvedSelectedId, 0]]);
-  const parents = new Map();
+  const parent = new Map();
   const q = [resolvedSelectedId];
   for (let i = 0; i < q.length; i++) {
     const u = q[i];
@@ -447,11 +447,8 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
       const v = n.otherId;
       if (!dist.has(v)) {
         dist.set(v, d + 1);
-        parents.set(v, new Set([u]));
+        parent.set(v, u);
         q.push(v);
-      } else if (dist.get(v) === d + 1) {
-        if (!parents.has(v)) parents.set(v, new Set());
-        parents.get(v).add(u);
       }
     }
   }
@@ -463,22 +460,30 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
 
   const minHostDist = Math.min(...hostReachableIds.map(id => dist.get(id)).filter(Number.isFinite));
   const selectedHosts = hostReachableIds
-    .filter(id => dist.get(id) === minHostDist)
-    .slice(0, 10);
+    .sort((a, b) => {
+      const da = dist.get(a);
+      const db = dist.get(b);
+      if (da !== db) return da - db;
+      return String(a).localeCompare(String(b));
+    })
+    .filter(id => dist.get(id) <= minHostDist + 1)
+    .slice(0, 8);
   if (!selectedHosts.length) return rawData;
 
   const focusNodes = new Set([resolvedSelectedId]);
   const focusEdges = new Set();
-  const backtrack = (nodeId) => {
-    focusNodes.add(nodeId);
-    if (nodeId === resolvedSelectedId) return;
-    for (const p of parents.get(nodeId) || []) {
+  const backtrackOnePath = (nodeId) => {
+    let cur = nodeId;
+    while (cur && cur !== resolvedSelectedId) {
+      focusNodes.add(cur);
+      const p = parent.get(cur);
+      if (!p) break;
       focusNodes.add(p);
-      addFocusEdge(p, nodeId);
-      backtrack(p);
+      addFocusEdge(p, cur);
+      cur = p;
     }
   };
-  for (const hid of selectedHosts) backtrack(hid);
+  for (const hid of selectedHosts) backtrackOnePath(hid);
   const corePathNodes = new Set(focusNodes);
 
   const cveIds = new Set();
@@ -504,12 +509,9 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
   for (const id of corePathNodes) addByLabel(id);
   addByLabel(resolvedSelectedId);
 
-  // 1) Triáda ThreatClass <-> (CVE|NVT) + CVE <-> NVT
-  const ctiSeed = new Set([...cveIds, ...nvtIds]);
-  const threatSeed = new Set(threatIds);
-  if (hasAnyLabel(selected, ["ThreatClass"])) threatSeed.add(resolvedSelectedId);
-
-  for (const sid of [...ctiSeed, ...threatSeed]) {
+  // 1) Obohacení cesty o nejbližší CTI souvislosti (bez "rozlití" do celého grafu)
+  const ctiSeed = new Set([...cveIds, ...nvtIds, ...threatIds]);
+  for (const sid of ctiSeed) {
     for (const n of adj.get(sid) || []) {
       const nid = n.otherId;
       const neigh = nodesById.get(nid);
@@ -529,7 +531,7 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
     }
   }
 
-  // 2) Z CTI uzlů vytáhneme aktéry a zpět navázané CTI
+  // 2) Z CTI uzlů vytáhneme aktéry a hosty.
   const ctiExpanded = new Set([...cveIds, ...nvtIds, ...threatIds]);
   for (const sid of ctiExpanded) {
     for (const n of adj.get(sid) || []) {
@@ -547,7 +549,7 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
     }
   }
 
-  // 3) Z aktérů navážeme AttackPattern + Location a udržíme CTI mezikrok
+  // 3) Z aktérů navážeme AttackPattern + Location a držíme jen přímé CTI vazby.
   for (const aid of actorIds) {
     for (const n of adj.get(aid) || []) {
       const nid = n.otherId;
@@ -572,7 +574,7 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
     }
   }
 
-  // 4) Pokud je vybraný Location/AttackPattern, přes aktéry dotáhneme CTI vazby.
+  // 4) Pokud je vybraný Location/AttackPattern, přidáme přímou cestu Location/AttackPattern -> aktér -> CTI/Host.
   if (hasAnyLabel(selected, ["Location", "AttackPattern"])) {
     for (const n of adj.get(resolvedSelectedId) || []) {
       const aid = n.otherId;
