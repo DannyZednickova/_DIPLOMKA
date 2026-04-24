@@ -6,6 +6,7 @@ let sim = null;
 let currentNodeId = null;
 let currentSelectionKind = null;
 let currentPathMode = "all";
+let currentHighlightPath = false;
 
 const LIST_ENDPOINTS = {
   hosts: "/api/list/hosts?limit=500",
@@ -411,8 +412,8 @@ function edgeKey(a, b) {
   return `${a}::${b}`;
 }
 
-function annotateDirectHostPath(rawData, selectedNodeId, pathMode) {
-  if (pathMode !== "hostPaths" && pathMode !== "highlightHostPath") return rawData;
+function annotateDirectHostPath(rawData, selectedNodeId, enabled) {
+  if (!enabled) return rawData;
   const nodes = rawData?.nodes || [];
   const edges = rawData?.edges || [];
   if (!nodes.length || !edges.length) return rawData;
@@ -831,13 +832,12 @@ function drawGraph(data) {
         if (d.__pathFocus) return 0.96;
         return d.__focus ? 0.34 : 0.04;
       }
-      if (currentPathMode === "highlightHostPath") return d.__pathFocus ? 0.94 : 0.05;
+      if (currentHighlightPath) return d.__pathFocus ? 0.96 : 0.05;
       return 0.28;
     })
     .attr("stroke-width", d => {
-      if (d.__pathFocus) return 3.2;
+      if (d.__pathFocus) return 4.1;
       if (currentPathMode === "hostPaths") return d.__focus ? 1.9 : 1.2;
-      if (currentPathMode === "highlightHostPath") return 1.2;
       return 1.6;
     });
 
@@ -845,7 +845,7 @@ function drawGraph(data) {
   const pathLinksCount = links.filter(l => l.__pathFocus).length;
   const showEdgeLabels = currentPathMode === "hostPaths"
     ? (focusedLinksCount > 0 && focusedLinksCount <= 180)
-    : currentPathMode === "highlightHostPath"
+    : currentHighlightPath
       ? (pathLinksCount > 0 && pathLinksCount <= 120)
     : links.length <= 120;
   const edgeLabel = showEdgeLabels
@@ -855,7 +855,7 @@ function drawGraph(data) {
       .text(d => d.type || "")
       .attr("display", d => {
         if (currentPathMode === "hostPaths" && !d.__focus) return "none";
-        if (currentPathMode === "highlightHostPath" && !d.__pathFocus) return "none";
+        if (currentHighlightPath && !d.__pathFocus) return "none";
         return null;
       })
       .attr("font-size", 9)
@@ -875,18 +875,20 @@ function drawGraph(data) {
         if (d.__pathFocus) return 1;
         return d.__focus ? 0.92 : 0.14;
       }
-      if (currentPathMode === "highlightHostPath") return d.__pathFocus ? 1 : 0.2;
+      if (currentHighlightPath) return d.__pathFocus ? 1 : 0.2;
       return 1;
     })
     .attr("fill", d => nodeColor(d))
     .attr("stroke", d => {
       if (d.id === currentNodeId) return "#0b1020";
-      if (d.__pathFocus && currentPathMode !== "all") return "#1f2937";
+      if (d.__pathFocus && currentHighlightPath) return "#000000";
+      if (d.__pathFocus && currentPathMode !== "all") return "#111827";
       return "#fff";
     })
     .attr("stroke-width", d => {
       if (d.id === currentNodeId) return 3.2;
-      if (d.__pathFocus && currentPathMode !== "all") return 2.2;
+      if (d.__pathFocus && currentHighlightPath) return 3.6;
+      if (d.__pathFocus && currentPathMode !== "all") return 2.4;
       return 1.2;
     })
     .call(drag());
@@ -900,7 +902,7 @@ function drawGraph(data) {
     .style("cursor", "pointer")
     .attr("display", d => {
       if (currentPathMode === "hostPaths" && !d.__focus) return "none";
-      if (currentPathMode === "highlightHostPath" && !d.__pathFocus && d.id !== currentNodeId) return "none";
+      if (currentHighlightPath && !d.__pathFocus && d.id !== currentNodeId) return "none";
       return null;
     })
     .attr("font-size", d => d.id === currentNodeId ? 12 : 10)
@@ -1029,10 +1031,10 @@ async function loadGraph(nodeId) {
     const url = `/api/graph?node_id=${encodeURIComponent(nodeId)}&hops=${hops}&max_nodes=${maxNodes}&max_edges=${maxEdges}`;
     const data = await apiJson(url);
     const hostFiltered = filterGraphForHostPaths(data, nodeId, currentPathMode);
-    const filtered = currentPathMode === "hostPaths" || currentPathMode === "highlightHostPath"
+    const filtered = currentPathMode === "hostPaths"
       ? hostFiltered
       : filterGraphForFocusedPath(hostFiltered, nodeId, hops, currentSelectionKind);
-    const pathAnnotated = annotateDirectHostPath(filtered, nodeId, currentPathMode);
+    const pathAnnotated = annotateDirectHostPath(filtered, nodeId, currentHighlightPath);
     drawGraph(pathAnnotated);
     refreshListHighlights();
   } catch (err) {
@@ -1195,6 +1197,13 @@ function bootstrapEvents() {
       if (currentNodeId) loadGraph(currentNodeId);
     });
   });
+  const highlightPath = document.getElementById("highlightPath");
+  if (highlightPath) {
+    highlightPath.addEventListener("change", () => {
+      currentHighlightPath = !!highlightPath.checked;
+      if (currentNodeId) loadGraph(currentNodeId);
+    });
+  }
 
   document.getElementById("ctxClose").addEventListener("click", () => {
     document.getElementById("ctx").style.display = "none";
