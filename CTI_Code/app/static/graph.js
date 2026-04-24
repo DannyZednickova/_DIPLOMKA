@@ -1073,6 +1073,9 @@ function bootstrapEvents() {
     if (!currentNodeId) return;
     loadGraph(currentNodeId);
   });
+  document.getElementById("btnReport").addEventListener("click", () => {
+    window.open("/api/report.xml", "_blank", "noopener,noreferrer");
+  });
 
   document.querySelectorAll('input[name="pathMode"]').forEach(inp => {
     inp.addEventListener("change", () => {

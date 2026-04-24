@@ -5,7 +5,7 @@ import logging
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from neo4j import GraphDatabase
 
@@ -67,6 +67,185 @@ def _shutdown():
 @app.get("/")
 def index():
     return FileResponse(str(INDEX_HTML))
+
+
+@app.get("/api/report.xml")
+def report_xml():
+    def safe_rows(query: str, **params):
+        try:
+            return [r.data() for r in run(query, **params)]
+        except HTTPException:
+            return []
+
+    generated_at = safe_rows("RETURN datetime().epochMillis AS ts")
+    generated_ts = generated_at[0]["ts"] if generated_at else None
+
+    host_summary = safe_rows(
+        """
+        MATCH (h:Host)
+        OPTIONAL MATCH (h)-[:HAS_NVT]->(nvt:NVT)
+        OPTIONAL MATCH (nvt)-[:REFERS_TO]->(c:CVE)
+        OPTIONAL MATCH (nvt)-[:INDICATES_THREAT]->(tc:ThreatClass)
+        WITH h,
+             collect(DISTINCT nvt) AS nvts,
+             collect(DISTINCT c) AS cves,
+             collect(DISTINCT tc) AS threat_classes
+        WITH h, nvts, cves, threat_classes,
+             [n IN nvts
+              WHERE toFloat(coalesce(n.cvss_base, n.cvss_base_score, n.x_opencti_cvss_base_score, 0.0)) >= 7.0] AS high_nvts,
+             [x IN nvts | toFloat(coalesce(x.cvss_base, x.cvss_base_score, x.x_opencti_cvss_base_score, 0.0))] AS severities
+        RETURN
+          coalesce(h.ip, h.name, elementId(h)) AS host_ip,
+          size(nvts) AS unique_nvt_count,
+          size(cves) AS unique_cve_count,
+          size(threat_classes) AS threat_class_count,
+          CASE WHEN size(severities)=0 THEN 0.0 ELSE round(reduce(mx = 0.0, s IN severities | CASE WHEN s > mx THEN s ELSE mx END), 2) END AS max_severity,
+          CASE WHEN size(severities)=0 THEN 0.0 ELSE round(reduce(sm = 0.0, s IN severities | sm + s) / toFloat(size(severities)), 2) END AS avg_severity,
+          size(high_nvts) AS high_critical_findings
+        ORDER BY high_critical_findings DESC, avg_severity DESC, unique_cve_count DESC, host_ip ASC
+        LIMIT 200
+        """
+    )
+
+    host_threat_detail = safe_rows(
+        """
+        MATCH (h:Host)-[:HAS_NVT]->(nvt:NVT)-[:INDICATES_THREAT]->(tc:ThreatClass)
+        OPTIONAL MATCH (nvt)-[:REFERS_TO]->(c:CVE)
+        WITH h, tc, collect(DISTINCT nvt) AS nvts, collect(DISTINCT c) AS cves
+        WITH h, tc, nvts, cves,
+             [x IN nvts | toFloat(coalesce(x.cvss_base, x.cvss_base_score, x.x_opencti_cvss_base_score, 0.0))] AS severities
+        RETURN
+          coalesce(h.ip, h.name, elementId(h)) AS host_ip,
+          coalesce(tc.name, elementId(tc)) AS threat_class,
+          size(nvts) AS nvt_count,
+          size(cves) AS cve_count,
+          CASE WHEN size(severities)=0 THEN 0.0 ELSE round(reduce(mx = 0.0, s IN severities | CASE WHEN s > mx THEN s ELSE mx END), 2) END AS max_severity,
+          reduce(txt = '', x IN nvts[0..3] | txt + CASE WHEN txt = '' THEN '' ELSE '; ' END + coalesce(x.name, x.oid, elementId(x))) AS nvt_examples
+        ORDER BY nvt_count DESC, cve_count DESC, host_ip ASC, threat_class ASC
+        LIMIT 400
+        """
+    )
+
+    top_cves = safe_rows(
+        """
+        MATCH (h:Host)-[:HAS_NVT]->(nvt:NVT)-[:REFERS_TO]->(c:CVE)
+        OPTIONAL MATCH (c)-[rel]-(ctx)
+        WHERE any(l IN labels(ctx) WHERE l IN ['Malware', 'IntrusionSet', 'AttackPattern'])
+        WITH c,
+             count(DISTINCT h) AS affected_hosts,
+             count(DISTINCT nvt) AS nvt_ref_count,
+             collect(DISTINCT coalesce(ctx.name, ctx.title, ctx.cve, elementId(ctx))) AS contexts
+        RETURN
+          coalesce(c.cve, c.name, elementId(c)) AS cve,
+          affected_hosts,
+          nvt_ref_count,
+          CASE WHEN size(contexts)=0 THEN '' ELSE reduce(txt = '', x IN contexts[0..5] | txt + CASE WHEN txt = '' THEN '' ELSE ' | ' END + x) END AS opencti_context
+        ORDER BY affected_hosts DESC, nvt_ref_count DESC, cve ASC
+        LIMIT 150
+        """
+    )
+
+    top_threat_classes = safe_rows(
+        """
+        MATCH (tc:ThreatClass)<-[:INDICATES_THREAT]-(nvt:NVT)<-[:HAS_NVT]-(h:Host)
+        OPTIONAL MATCH (nvt)-[:REFERS_TO]->(c:CVE)
+        WITH tc,
+             collect(DISTINCT h) AS hosts,
+             collect(DISTINCT nvt) AS nvts,
+             collect(DISTINCT c) AS cves
+        RETURN
+          coalesce(tc.name, elementId(tc)) AS threat_class,
+          size(hosts) AS affected_hosts,
+          size(nvts) AS nvt_count,
+          size(cves) AS cve_count,
+          reduce(txt = '', x IN hosts[0..5] | txt + CASE WHEN txt = '' THEN '' ELSE '; ' END + coalesce(x.ip, x.name, elementId(x))) AS top_hosts
+        ORDER BY affected_hosts DESC, nvt_count DESC, cve_count DESC, threat_class ASC
+        LIMIT 120
+        """
+    )
+
+    cti_correlation = safe_rows(
+        """
+        MATCH (h:Host)-[:HAS_NVT]->(:NVT)-[:REFERS_TO]->(c:CVE)
+        WITH c, count(DISTINCT h) AS local_hosts
+        OPTIONAL MATCH (c)-[rel]-(ctx)
+        WHERE any(l IN labels(ctx) WHERE l IN ['Malware', 'IntrusionSet', 'AttackPattern'])
+        RETURN
+          coalesce(c.cve, c.name, elementId(c)) AS cve,
+          coalesce(ctx.name, ctx.title, ctx.cve, elementId(ctx)) AS linked_entity,
+          CASE
+            WHEN type(rel) IN ['USES', 'TARGETS', 'EXPLOITS'] THEN type(rel)
+            ELSE coalesce(type(rel), 'RELATED_TO')
+          END AS relation_type,
+          local_hosts
+        ORDER BY local_hosts DESC, cve ASC, relation_type ASC, linked_entity ASC
+        LIMIT 250
+        """
+    )
+
+    def esc(value):
+        text = "" if value is None else str(value)
+        return (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&apos;")
+        )
+
+    def xml_rows(tag: str, rows: list, fields: list[str]) -> str:
+        parts = [f"  <{tag}>"]
+        for row in rows:
+            parts.append("    <row>")
+            for field in fields:
+                parts.append(f"      <{field}>{esc(row.get(field))}</{field}>")
+            parts.append("    </row>")
+        parts.append(f"  </{tag}>")
+        return "\n".join(parts)
+
+    xml = "\n".join(
+        [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<?xml-stylesheet type="text/xsl" href="/static/report.xsl"?>',
+            "<ctiReport>",
+            f"  <generatedAtEpochMs>{esc(generated_ts)}</generatedAtEpochMs>",
+            xml_rows(
+                "hostSummary",
+                host_summary,
+                [
+                    "host_ip",
+                    "unique_nvt_count",
+                    "unique_cve_count",
+                    "threat_class_count",
+                    "max_severity",
+                    "avg_severity",
+                    "high_critical_findings",
+                ],
+            ),
+            xml_rows(
+                "hostThreatClassDetail",
+                host_threat_detail,
+                ["host_ip", "threat_class", "nvt_count", "cve_count", "max_severity", "nvt_examples"],
+            ),
+            xml_rows(
+                "topCveImpact",
+                top_cves,
+                ["cve", "affected_hosts", "nvt_ref_count", "opencti_context"],
+            ),
+            xml_rows(
+                "topThreatClasses",
+                top_threat_classes,
+                ["threat_class", "affected_hosts", "nvt_count", "cve_count", "top_hosts"],
+            ),
+            xml_rows(
+                "ctiCorrelation",
+                cti_correlation,
+                ["cve", "linked_entity", "relation_type", "local_hosts"],
+            ),
+            "</ctiReport>",
+        ]
+    )
+    return Response(content=xml, media_type="application/xml")
 
 
 @app.get("/api/node")
