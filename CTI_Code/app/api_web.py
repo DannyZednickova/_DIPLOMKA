@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from neo4j import GraphDatabase
+print("app/api_web.py loaded")
 
 load_dotenv()
 
