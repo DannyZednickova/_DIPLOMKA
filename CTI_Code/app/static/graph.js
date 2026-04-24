@@ -5,6 +5,7 @@ const height = () => document.getElementById("graph").clientHeight;
 let sim = null;
 let currentNodeId = null;
 let currentSelectionKind = null;
+let currentPathMode = "all";
 
 const LIST_ENDPOINTS = {
   hosts: "/api/list/hosts?limit=500",
@@ -160,6 +161,20 @@ function formatTagsRawForModal(tagsRaw) {
   return [vec || "", rest.join("\n")].filter(Boolean).join("\n\n");
 }
 
+function parseExternalReferences(rawValue) {
+  if (!rawValue) return [];
+  if (Array.isArray(rawValue)) return rawValue;
+  if (typeof rawValue === "string") {
+    try {
+      const parsed = JSON.parse(rawValue);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
+    }
+  }
+  return [];
+}
+
 function ensureCtxModal() {
   let modal = document.getElementById("ctxModal");
   if (modal) return modal;
@@ -280,6 +295,78 @@ function renderContextHighlights(data) {
     addExpandableField(wrap, "Summary", props.summary);
     addExpandableField(wrap, "Tags_Raw", props.tags_raw, formatTagsRawForModal);
   }
+
+  if (labels.includes("CVE") || labels.includes("Vulnerability") || nodeLooksLikeCve(data)) {
+    const cveScore = props.x_opencti_cvss_base_score ?? props.cvss_base_score ?? props.cvss_base;
+    const severity = props.x_opencti_cvss_base_severity ?? props.cvss_severity ?? "";
+    const vector = props.x_opencti_cvss_vector_string ?? props.cvss_vector ?? "";
+    const attackVector = props.x_opencti_cvss_attack_vector ?? "";
+    const attackComplexity = props.x_opencti_cvss_attack_complexity ?? "";
+    const privs = props.x_opencti_cvss_privileges_required ?? "";
+    const ui = props.x_opencti_cvss_user_interaction ?? "";
+    const kev = props.x_opencti_cisa_kev;
+
+    if (cveScore || severity || vector) {
+      const kv = document.createElement("div");
+      kv.className = "ctx-kv";
+      if (cveScore !== undefined && cveScore !== null && String(cveScore).trim() !== "") {
+        const scoreLbl = document.createElement("b");
+        scoreLbl.textContent = "CVSS:";
+        kv.appendChild(scoreLbl);
+        kv.appendChild(document.createTextNode(` ${cveScore}`));
+      }
+      if (severity) {
+        kv.appendChild(document.createElement("br"));
+        const sevLbl = document.createElement("b");
+        sevLbl.textContent = "Severity:";
+        kv.appendChild(sevLbl);
+        kv.appendChild(document.createTextNode(` ${severity}`));
+      }
+      if (vector) {
+        kv.appendChild(document.createElement("br"));
+        const vecLbl = document.createElement("b");
+        vecLbl.textContent = "Vector:";
+        kv.appendChild(vecLbl);
+        kv.appendChild(document.createTextNode(` ${vector}`));
+      }
+      wrap.appendChild(kv);
+    }
+
+    const aspects = [
+      ["Attack vector", attackVector],
+      ["Complexity", attackComplexity],
+      ["Privileges", privs],
+      ["User interaction", ui],
+      ["CISA KEV", kev === true ? "YES" : (kev === false ? "NO" : "")],
+    ]
+      .filter(([, value]) => String(value || "").trim())
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("\n");
+    addExpandableField(wrap, "CVSS detail", aspects);
+    addExpandableField(wrap, "Description", props.description);
+
+    const refs = parseExternalReferences(props.external_references);
+    if (refs.length) {
+      const refsWrap = document.createElement("div");
+      refsWrap.className = "ctx-kv";
+      const lbl = document.createElement("b");
+      lbl.textContent = "References:";
+      refsWrap.appendChild(lbl);
+
+      refs.slice(0, 4).forEach((r) => {
+        const url = String(r?.url || "").trim();
+        if (!url) return;
+        refsWrap.appendChild(document.createElement("br"));
+        const a = document.createElement("a");
+        a.href = url;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = String(r?.external_id || r?.source_name || url);
+        refsWrap.appendChild(a);
+      });
+      wrap.appendChild(refsWrap);
+    }
+  }
 }
 
 function resolveAnchorIds(nodes, selectedNodeId, mode) {
@@ -303,6 +390,125 @@ function resolveAnchorIds(nodes, selectedNodeId, mode) {
   }
 
   return out;
+}
+
+function resolveSelectedNodeId(nodes, selectedNodeId) {
+  const needle = String(selectedNodeId || "").trim().toUpperCase();
+  if (!needle) return null;
+  const exact = nodes.find(n =>
+    String(n.id || "").trim().toUpperCase() === needle ||
+    String(n.title || "").trim().toUpperCase() === needle
+  );
+  if (exact) return exact.id;
+  const prefix = nodes.find(n =>
+    String(n.id || "").trim().toUpperCase().startsWith(needle) ||
+    String(n.title || "").trim().toUpperCase().startsWith(needle)
+  );
+  return prefix ? prefix.id : null;
+}
+
+function edgeKey(a, b) {
+  return `${a}::${b}`;
+}
+
+function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
+  if (pathMode !== "hostPaths") return rawData;
+  const nodes = rawData?.nodes || [];
+  const edges = rawData?.edges || [];
+  if (!nodes.length || !edges.length) return rawData;
+
+  const nodesById = new Map(nodes.map(n => [n.id, n]));
+  const resolvedSelectedId = nodesById.has(selectedNodeId)
+    ? selectedNodeId
+    : resolveSelectedNodeId(nodes, selectedNodeId);
+  const selected = nodesById.get(resolvedSelectedId);
+  if (!selected || hasAnyLabel(selected, ["Host"])) return rawData;
+
+  const adj = new Map();
+  const addAdj = (a, b) => {
+    if (!adj.has(a)) adj.set(a, []);
+    adj.get(a).push(b);
+  };
+  for (const e of edges) {
+    if (!e?.source || !e?.target) continue;
+    addAdj(e.source, e.target);
+    addAdj(e.target, e.source);
+  }
+
+  const dist = new Map([[resolvedSelectedId, 0]]);
+  const parents = new Map();
+  const q = [resolvedSelectedId];
+  for (let i = 0; i < q.length; i++) {
+    const u = q[i];
+    const d = dist.get(u);
+    for (const v of adj.get(u) || []) {
+      if (!dist.has(v)) {
+        dist.set(v, d + 1);
+        parents.set(v, new Set([u]));
+        q.push(v);
+      } else if (dist.get(v) === d + 1) {
+        if (!parents.has(v)) parents.set(v, new Set());
+        parents.get(v).add(u);
+      }
+    }
+  }
+
+  const hostIds = nodes
+    .filter(n => hasAnyLabel(n, ["Host"]) && dist.has(n.id))
+    .map(n => n.id);
+  if (!hostIds.length) return rawData;
+
+  const minHostDist = Math.min(...hostIds.map(id => dist.get(id)).filter(Number.isFinite));
+  const selectedHosts = hostIds
+    .filter(id => dist.get(id) === minHostDist)
+    .slice(0, 10);
+  if (!selectedHosts.length) return rawData;
+
+  const focusNodes = new Set([resolvedSelectedId]);
+  const focusEdges = new Set();
+  const backtrack = (nodeId) => {
+    focusNodes.add(nodeId);
+    if (nodeId === resolvedSelectedId) return;
+    for (const p of parents.get(nodeId) || []) {
+      focusNodes.add(p);
+      focusEdges.add(edgeKey(p, nodeId));
+      focusEdges.add(edgeKey(nodeId, p));
+      backtrack(p);
+    }
+  };
+  for (const hid of selectedHosts) backtrack(hid);
+  const corePathNodes = new Set(focusNodes);
+
+  const ctiSeed = [...corePathNodes].filter(id => {
+    const n = nodesById.get(id);
+    return hasAnyLabel(n, ["CVE", "Vulnerability", "NVT"]);
+  });
+  const auxThreat = new Set();
+  for (const sid of ctiSeed) {
+    for (const nid of adj.get(sid) || []) {
+      const neigh = nodesById.get(nid);
+      if (hasAnyLabel(neigh, ["ThreatClass"])) {
+        auxThreat.add(nid);
+        focusEdges.add(edgeKey(sid, nid));
+        focusEdges.add(edgeKey(nid, sid));
+      }
+    }
+  }
+  for (const tid of auxThreat) focusNodes.add(tid);
+
+  return {
+    ...rawData,
+    nodes: nodes.map(n => ({
+      ...n,
+      __focus: focusNodes.has(n.id),
+      __dimmed: !focusNodes.has(n.id),
+    })),
+    edges: edges.map(e => ({
+      ...e,
+      __focus: focusEdges.has(edgeKey(e.source, e.target)) || focusEdges.has(edgeKey(e.target, e.source)),
+      __dimmed: !(focusEdges.has(edgeKey(e.source, e.target)) || focusEdges.has(edgeKey(e.target, e.source))),
+    })),
+  };
 }
 
 function filterGraphForFocusedPath(rawData, selectedNodeId, hops, selectionKind) {
@@ -423,18 +629,30 @@ function drawGraph(data) {
   const gNodes = svg.append("g");
   const gLabels = svg.append("g");
 
+  const isHostNode = (n) => hasAnyLabel(n, ["Host"]);
+  const nodeRadius = (n) => {
+    const base = isHostNode(n) ? 8.2 : 6.2;
+    if (n.id === currentNodeId) return isHostNode(n) ? 13.2 : 10.8;
+    return base;
+  };
+
   const link = gLinks.selectAll("line")
     .data(links)
     .join("line")
     .attr("stroke", d => edgeColor(d.type))
+    .attr("stroke-opacity", d => currentPathMode === "hostPaths" ? (d.__focus ? 0.52 : 0.06) : 0.28)
     .attr("stroke-width", 1.6);
 
-  const showEdgeLabels = links.length <= 120;
+  const focusedLinksCount = links.filter(l => l.__focus).length;
+  const showEdgeLabels = currentPathMode === "hostPaths"
+    ? (focusedLinksCount > 0 && focusedLinksCount <= 180)
+    : links.length <= 120;
   const edgeLabel = showEdgeLabels
     ? gEdgeLabels.selectAll("text")
       .data(links)
       .join("text")
       .text(d => d.type || "")
+      .attr("display", d => currentPathMode === "hostPaths" && !d.__focus ? "none" : null)
       .attr("font-size", 9)
       .attr("font-weight", 700)
       .attr("fill", d => edgeColor(d.type))
@@ -446,7 +664,8 @@ function drawGraph(data) {
   const node = gNodes.selectAll("circle")
     .data(nodes)
     .join("circle")
-    .attr("r", d => d.id === currentNodeId ? 10 : 5.4)
+    .attr("r", d => nodeRadius(d))
+    .attr("opacity", d => currentPathMode === "hostPaths" ? (d.__focus ? 1 : 0.18) : 1)
     .attr("fill", d => nodeColor(d))
     .attr("stroke", d => d.id === currentNodeId ? "#0b1020" : "#fff")
     .attr("stroke-width", d => d.id === currentNodeId ? 3.2 : 1.2)
@@ -458,6 +677,7 @@ function drawGraph(data) {
     .data(nodes)
     .join("text")
     .text(d => nodeLabel(d))
+    .attr("display", d => currentPathMode === "hostPaths" && !d.__focus ? "none" : null)
     .attr("font-size", d => d.id === currentNodeId ? 12 : 10)
     .attr("font-weight", d => d.id === currentNodeId ? 800 : 500)
     .attr("fill", d => d.id === currentNodeId ? "#111827" : "#273043")
@@ -465,38 +685,41 @@ function drawGraph(data) {
     .attr("stroke-width", 0.25)
     .attr("paint-order", "stroke");
 
+  const ticked = () => {
+    link
+      .attr("x1", d => d.source.x)
+      .attr("y1", d => d.source.y)
+      .attr("x2", d => d.target.x)
+      .attr("y2", d => d.target.y);
+
+    node
+      .attr("cx", d => d.x)
+      .attr("cy", d => d.y);
+
+    text
+      .attr("x", d => d.x + 7)
+      .attr("y", d => d.y - 7);
+
+    if (edgeLabel) {
+      edgeLabel
+        .attr("x", d => (d.source.x + d.target.x) / 2)
+        .attr("y", d => (d.source.y + d.target.y) / 2 - 4);
+    }
+  };
+
   sim = d3.forceSimulation(nodes)
-    .alpha(0.36)
-    .alphaDecay(0.06)
-    .velocityDecay(0.42)
-    .force("link", d3.forceLink(links).id(d => d.id).distance(170).strength(0.16))
-    .force("charge", d3.forceManyBody().strength(-700))
+    .alpha(0.22)
+    .alphaDecay(0.24)
+    .velocityDecay(0.78)
+    .force("link", d3.forceLink(links).id(d => d.id).distance(260).strength(0.1))
+    .force("charge", d3.forceManyBody().strength(-1200))
     .force("center", d3.forceCenter(width() / 2, height() / 2))
-    .force("collide", d3.forceCollide(24))
-    .on("tick", () => {
-      link
-        .attr("x1", d => d.source.x)
-        .attr("y1", d => d.source.y)
-        .attr("x2", d => d.target.x)
-        .attr("y2", d => d.target.y);
+    .force("collide", d3.forceCollide(d => isHostNode(d) ? 44 : 34))
+    .on("tick", ticked);
 
-      node
-        .attr("cx", d => d.x)
-        .attr("cy", d => d.y);
-
-      text
-        .attr("x", d => d.x + 7)
-        .attr("y", d => d.y - 7);
-
-      if (edgeLabel) {
-        edgeLabel
-          .attr("x", d => (d.source.x + d.target.x) / 2)
-          .attr("y", d => (d.source.y + d.target.y) / 2 - 4);
-      }
-    });
-  setTimeout(() => {
-    if (sim) sim.stop();
-  }, 2500);
+  sim.stop();
+  for (let i = 0; i < 140; i++) sim.tick();
+  ticked();
 
   node.on("click", async (event, d) => {
     if (event.shiftKey) {
@@ -520,7 +743,7 @@ function drawGraph(data) {
 
 function drag() {
   function started(event, d) {
-    if (!event.active) sim.alphaTarget(0.12).restart();
+    if (!event.active) sim.alphaTarget(0.04).restart();
     d.fx = d.x;
     d.fy = d.y;
   }
@@ -574,7 +797,10 @@ async function loadGraph(nodeId) {
     currentNodeId = nodeId;
     const url = `/api/graph?node_id=${encodeURIComponent(nodeId)}&hops=${hops}&max_nodes=${maxNodes}&max_edges=${maxEdges}`;
     const data = await apiJson(url);
-    const filtered = filterGraphForFocusedPath(data, nodeId, hops, currentSelectionKind);
+    const hostFiltered = filterGraphForHostPaths(data, nodeId, currentPathMode);
+    const filtered = currentPathMode === "hostPaths"
+      ? hostFiltered
+      : filterGraphForFocusedPath(hostFiltered, nodeId, hops, currentSelectionKind);
     drawGraph(filtered);
     refreshListHighlights();
   } catch (err) {
@@ -687,6 +913,7 @@ async function openCtx(node) {
   document.getElementById("ctxMeta").textContent = `${(node.labels || []).join(", ")} | id=${node.id}`;
   document.getElementById("ctxHighlights").innerHTML = "";
   propsEl.classList.remove("nvt-compact");
+  propsEl.classList.remove("cve-compact");
   propsEl.textContent = "Loading...";
   document.getElementById("ctxNeigh").innerHTML = "Loading...";
 
@@ -696,6 +923,7 @@ async function openCtx(node) {
     document.getElementById("ctxMeta").textContent = `${(data.labels || []).join(", ")} | id=${data.id}`;
     renderContextHighlights(data);
     if (nodeLooksLikeNvt(data)) propsEl.classList.add("nvt-compact");
+    if (nodeLooksLikeCve(data)) propsEl.classList.add("cve-compact");
     propsEl.textContent = JSON.stringify(data.props || {}, null, 2);
 
     const neigh = document.getElementById("ctxNeigh");
@@ -724,6 +952,13 @@ function bootstrapEvents() {
   document.getElementById("btnReload").addEventListener("click", () => {
     if (!currentNodeId) return;
     loadGraph(currentNodeId);
+  });
+
+  document.querySelectorAll('input[name="pathMode"]').forEach(inp => {
+    inp.addEventListener("change", () => {
+      currentPathMode = document.querySelector('input[name="pathMode"]:checked')?.value || "all";
+      if (currentNodeId) loadGraph(currentNodeId);
+    });
   });
 
   document.getElementById("ctxClose").addEventListener("click", () => {

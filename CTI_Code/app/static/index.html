@@ -19,6 +19,16 @@
       <input id="maxNodes" type="number" value="1200" min="50" max="5000" step="50" />
     </label>
     <button id="btnReload">Reload selected</button>
+    <div class="path-mode" role="radiogroup" aria-label="Filtrace grafu k hostům">
+      <label>
+        <input type="radio" name="pathMode" value="all" checked />
+        Vše
+      </label>
+      <label>
+        <input type="radio" name="pathMode" value="hostPaths" />
+        Cesty k hostům
+      </label>
+    </div>
   </header>
 
   <div id="layout">
