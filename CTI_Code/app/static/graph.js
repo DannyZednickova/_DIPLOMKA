@@ -411,6 +411,77 @@ function edgeKey(a, b) {
   return `${a}::${b}`;
 }
 
+function annotateDirectHostPath(rawData, selectedNodeId, pathMode) {
+  if (pathMode !== "hostPaths" && pathMode !== "highlightHostPath") return rawData;
+  const nodes = rawData?.nodes || [];
+  const edges = rawData?.edges || [];
+  if (!nodes.length || !edges.length) return rawData;
+
+  const nodesById = new Map(nodes.map(n => [n.id, n]));
+  const resolvedSelectedId = nodesById.has(selectedNodeId)
+    ? selectedNodeId
+    : resolveSelectedNodeId(nodes, selectedNodeId);
+  if (!resolvedSelectedId || !nodesById.has(resolvedSelectedId)) return rawData;
+
+  const adj = buildAdjacency(edges);
+  const dist = new Map([[resolvedSelectedId, 0]]);
+  const parent = new Map();
+  const q = [resolvedSelectedId];
+  let nearestHostDist = null;
+  const nearestHosts = [];
+
+  for (let i = 0; i < q.length; i++) {
+    const u = q[i];
+    const d = dist.get(u);
+    if (nearestHostDist !== null && d > nearestHostDist) break;
+
+    const nodeU = nodesById.get(u);
+    if (u !== resolvedSelectedId && nodeU && hasAnyLabel(nodeU, ["Host"])) {
+      if (nearestHostDist === null) nearestHostDist = d;
+      if (d === nearestHostDist) nearestHosts.push(u);
+      if (nearestHosts.length >= 4) break;
+      continue;
+    }
+
+    for (const n of adj.get(u) || []) {
+      const v = n.otherId;
+      if (dist.has(v)) continue;
+      dist.set(v, d + 1);
+      parent.set(v, u);
+      q.push(v);
+    }
+  }
+
+  const pathNodes = new Set([resolvedSelectedId]);
+  const pathEdges = new Set();
+  const addPathEdge = (a, b) => {
+    pathEdges.add(edgeKey(a, b));
+    pathEdges.add(edgeKey(b, a));
+  };
+
+  if (hasAnyLabel(nodesById.get(resolvedSelectedId), ["Host"])) {
+    nearestHosts.push(resolvedSelectedId);
+  }
+
+  for (const hid of nearestHosts) {
+    let cur = hid;
+    pathNodes.add(cur);
+    while (cur && cur !== resolvedSelectedId) {
+      const p = parent.get(cur);
+      if (!p) break;
+      pathNodes.add(p);
+      addPathEdge(p, cur);
+      cur = p;
+    }
+  }
+
+  return {
+    ...rawData,
+    nodes: nodes.map(n => ({ ...n, __pathFocus: pathNodes.has(n.id) })),
+    edges: edges.map(e => ({ ...e, __pathFocus: pathEdges.has(edgeKey(e.source, e.target)) })),
+  };
+}
+
 function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
   if (pathMode !== "hostPaths") return rawData;
   const nodes = rawData?.nodes || [];
@@ -755,19 +826,38 @@ function drawGraph(data) {
     .data(links)
     .join("line")
     .attr("stroke", d => edgeColor(d.type))
-    .attr("stroke-opacity", d => currentPathMode === "hostPaths" ? (d.__focus ? 0.52 : 0.06) : 0.28)
-    .attr("stroke-width", 1.6);
+    .attr("stroke-opacity", d => {
+      if (currentPathMode === "hostPaths") {
+        if (d.__pathFocus) return 0.96;
+        return d.__focus ? 0.34 : 0.04;
+      }
+      if (currentPathMode === "highlightHostPath") return d.__pathFocus ? 0.94 : 0.05;
+      return 0.28;
+    })
+    .attr("stroke-width", d => {
+      if (d.__pathFocus) return 3.2;
+      if (currentPathMode === "hostPaths") return d.__focus ? 1.9 : 1.2;
+      if (currentPathMode === "highlightHostPath") return 1.2;
+      return 1.6;
+    });
 
   const focusedLinksCount = links.filter(l => l.__focus).length;
+  const pathLinksCount = links.filter(l => l.__pathFocus).length;
   const showEdgeLabels = currentPathMode === "hostPaths"
     ? (focusedLinksCount > 0 && focusedLinksCount <= 180)
+    : currentPathMode === "highlightHostPath"
+      ? (pathLinksCount > 0 && pathLinksCount <= 120)
     : links.length <= 120;
   const edgeLabel = showEdgeLabels
     ? gEdgeLabels.selectAll("text")
       .data(links)
       .join("text")
       .text(d => d.type || "")
-      .attr("display", d => currentPathMode === "hostPaths" && !d.__focus ? "none" : null)
+      .attr("display", d => {
+        if (currentPathMode === "hostPaths" && !d.__focus) return "none";
+        if (currentPathMode === "highlightHostPath" && !d.__pathFocus) return "none";
+        return null;
+      })
       .attr("font-size", 9)
       .attr("font-weight", 700)
       .attr("fill", d => edgeColor(d.type))
@@ -780,10 +870,25 @@ function drawGraph(data) {
     .data(nodes)
     .join("circle")
     .attr("r", d => nodeRadius(d))
-    .attr("opacity", d => currentPathMode === "hostPaths" ? (d.__focus ? 1 : 0.18) : 1)
+    .attr("opacity", d => {
+      if (currentPathMode === "hostPaths") {
+        if (d.__pathFocus) return 1;
+        return d.__focus ? 0.92 : 0.14;
+      }
+      if (currentPathMode === "highlightHostPath") return d.__pathFocus ? 1 : 0.2;
+      return 1;
+    })
     .attr("fill", d => nodeColor(d))
-    .attr("stroke", d => d.id === currentNodeId ? "#0b1020" : "#fff")
-    .attr("stroke-width", d => d.id === currentNodeId ? 3.2 : 1.2)
+    .attr("stroke", d => {
+      if (d.id === currentNodeId) return "#0b1020";
+      if (d.__pathFocus && currentPathMode !== "all") return "#1f2937";
+      return "#fff";
+    })
+    .attr("stroke-width", d => {
+      if (d.id === currentNodeId) return 3.2;
+      if (d.__pathFocus && currentPathMode !== "all") return 2.2;
+      return 1.2;
+    })
     .call(drag());
 
   node.append("title").text(d => `${nodeLabel(d)}\n${(d.labels || []).join(", ")}`);
@@ -793,7 +898,11 @@ function drawGraph(data) {
     .join("text")
     .text(d => nodeLabel(d))
     .style("cursor", "pointer")
-    .attr("display", d => currentPathMode === "hostPaths" && !d.__focus ? "none" : null)
+    .attr("display", d => {
+      if (currentPathMode === "hostPaths" && !d.__focus) return "none";
+      if (currentPathMode === "highlightHostPath" && !d.__pathFocus && d.id !== currentNodeId) return "none";
+      return null;
+    })
     .attr("font-size", d => d.id === currentNodeId ? 12 : 10)
     .attr("font-weight", d => d.id === currentNodeId ? 800 : 500)
     .attr("fill", d => d.id === currentNodeId ? "#111827" : "#273043")
@@ -920,10 +1029,11 @@ async function loadGraph(nodeId) {
     const url = `/api/graph?node_id=${encodeURIComponent(nodeId)}&hops=${hops}&max_nodes=${maxNodes}&max_edges=${maxEdges}`;
     const data = await apiJson(url);
     const hostFiltered = filterGraphForHostPaths(data, nodeId, currentPathMode);
-    const filtered = currentPathMode === "hostPaths"
+    const filtered = currentPathMode === "hostPaths" || currentPathMode === "highlightHostPath"
       ? hostFiltered
       : filterGraphForFocusedPath(hostFiltered, nodeId, hops, currentSelectionKind);
-    drawGraph(filtered);
+    const pathAnnotated = annotateDirectHostPath(filtered, nodeId, currentPathMode);
+    drawGraph(pathAnnotated);
     refreshListHighlights();
   } catch (err) {
     alert(err.message);
