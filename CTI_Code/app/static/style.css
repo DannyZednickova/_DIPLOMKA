@@ -25,6 +25,24 @@ header {
 }
 
 header input[type="number"] { width: 78px; }
+.header-spacer {
+  flex: 1 1 auto;
+}
+.report-btn {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  padding: 10px 16px;
+  border-radius: 12px;
+  border: 1px solid #2a5ec7;
+  background: linear-gradient(180deg, #4f87ff 0%, #2f6de7 100%);
+  color: #fff;
+  box-shadow: 0 6px 14px rgba(47, 109, 231, 0.24);
+  cursor: pointer;
+}
+.report-btn:hover {
+  background: linear-gradient(180deg, #5b91ff 0%, #3a75ea 100%);
+}
 .path-mode {
   display: inline-flex;
   align-items: center;

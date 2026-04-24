@@ -5,7 +5,7 @@ import logging
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from neo4j import GraphDatabase
 
@@ -67,6 +67,116 @@ def _shutdown():
 @app.get("/")
 def index():
     return FileResponse(str(INDEX_HTML))
+
+
+@app.get("/api/report.xml")
+def report_xml():
+    def safe_rows(query: str, **params):
+        try:
+            return [r.data() for r in run(query, **params)]
+        except HTTPException:
+            return []
+
+    generated_at = safe_rows("RETURN datetime().epochMillis AS ts")
+    generated_ts = generated_at[0]["ts"] if generated_at else None
+
+    summary = safe_rows(
+        """
+        MATCH (n)
+        WITH labels(n) AS labs
+        UNWIND labs AS label
+        RETURN label, count(*) AS total
+        ORDER BY total DESC, label ASC
+        """
+    )
+
+    top_hosts = safe_rows(
+        """
+        MATCH (h:Host)
+        OPTIONAL MATCH (h)-[:VULNERABLE_TO]->(c)
+        WITH h, count(DISTINCT c) AS cves
+        RETURN coalesce(h.ip, h.name, elementId(h)) AS host, cves
+        ORDER BY cves DESC, host ASC
+        LIMIT 25
+        """
+    )
+
+    top_cves = safe_rows(
+        """
+        MATCH (h:Host)-[:VULNERABLE_TO]->(c)
+        WITH c, count(DISTINCT h) AS hosts
+        RETURN coalesce(c.cve, c.name, elementId(c)) AS cve, hosts
+        ORDER BY hosts DESC, cve ASC
+        LIMIT 25
+        """
+    )
+
+    top_threat_classes = safe_rows(
+        """
+        MATCH (t:ThreatClass)<-[:INDICATES_THREAT]-(:NVT)<-[:HAS_NVT]-(:Host)
+        WITH t, count(*) AS hits
+        RETURN coalesce(t.name, elementId(t)) AS threat_class, hits
+        ORDER BY hits DESC, threat_class ASC
+        LIMIT 20
+        """
+    )
+
+    top_malware = safe_rows(
+        """
+        MATCH (:IntrusionSet)-[:USES]->(m:Malware)
+        WITH m, count(*) AS used_by_groups
+        RETURN coalesce(m.name, elementId(m)) AS malware, used_by_groups
+        ORDER BY used_by_groups DESC, malware ASC
+        LIMIT 20
+        """
+    )
+
+    top_locations = safe_rows(
+        """
+        MATCH (:IntrusionSet)-[:TARGETS]->(l:Location)
+        WITH l, count(*) AS targets
+        RETURN coalesce(l.name, elementId(l)) AS location, targets
+        ORDER BY targets DESC, location ASC
+        LIMIT 20
+        """
+    )
+
+    def esc(value):
+        text = "" if value is None else str(value)
+        return (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&apos;")
+        )
+
+    def xml_rows(tag: str, rows: list, fields: list[str]) -> str:
+        parts = [f"  <{tag}>"]
+        for row in rows:
+            parts.append("    <row>")
+            for field in fields:
+                parts.append(f"      <{field}>{esc(row.get(field))}</{field}>")
+            parts.append("    </row>")
+        parts.append(f"  </{tag}>")
+        return "\n".join(parts)
+
+    xml = "\n".join(
+        [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<?xml-stylesheet type="text/xsl" href="/static/report.xsl"?>',
+            "<ctiReport>",
+            f"  <generatedAtEpochMs>{esc(generated_ts)}</generatedAtEpochMs>",
+            xml_rows("summaryByLabel", summary, ["label", "total"]),
+            xml_rows("topHostsByCves", top_hosts, ["host", "cves"]),
+            xml_rows("topCvesByHosts", top_cves, ["cve", "hosts"]),
+            xml_rows("topThreatClasses", top_threat_classes, ["threat_class", "hits"]),
+            xml_rows("topMalwareByGroupUsage", top_malware, ["malware", "used_by_groups"]),
+            xml_rows("topLocationsTargeted", top_locations, ["location", "targets"]),
+            "</ctiReport>",
+        ]
+    )
+    return Response(content=xml, media_type="application/xml")
 
 
 @app.get("/api/node")
