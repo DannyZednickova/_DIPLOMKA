@@ -629,11 +629,18 @@ function drawGraph(data) {
   const gNodes = svg.append("g");
   const gLabels = svg.append("g");
 
+  const isHostNode = (n) => hasAnyLabel(n, ["Host"]);
+  const nodeRadius = (n) => {
+    const base = isHostNode(n) ? 8.2 : 6.2;
+    if (n.id === currentNodeId) return isHostNode(n) ? 13.2 : 10.8;
+    return base;
+  };
+
   const link = gLinks.selectAll("line")
     .data(links)
     .join("line")
     .attr("stroke", d => edgeColor(d.type))
-    .attr("stroke-opacity", d => currentPathMode === "hostPaths" ? (d.__focus ? 0.95 : 0.08) : 0.82)
+    .attr("stroke-opacity", d => currentPathMode === "hostPaths" ? (d.__focus ? 0.52 : 0.06) : 0.28)
     .attr("stroke-width", 1.6);
 
   const focusedLinksCount = links.filter(l => l.__focus).length;
@@ -657,7 +664,7 @@ function drawGraph(data) {
   const node = gNodes.selectAll("circle")
     .data(nodes)
     .join("circle")
-    .attr("r", d => d.id === currentNodeId ? 10 : 5.4)
+    .attr("r", d => nodeRadius(d))
     .attr("opacity", d => currentPathMode === "hostPaths" ? (d.__focus ? 1 : 0.18) : 1)
     .attr("fill", d => nodeColor(d))
     .attr("stroke", d => d.id === currentNodeId ? "#0b1020" : "#fff")
@@ -701,17 +708,17 @@ function drawGraph(data) {
   };
 
   sim = d3.forceSimulation(nodes)
-    .alpha(0.26)
-    .alphaDecay(0.2)
-    .velocityDecay(0.72)
-    .force("link", d3.forceLink(links).id(d => d.id).distance(220).strength(0.11))
-    .force("charge", d3.forceManyBody().strength(-900))
+    .alpha(0.22)
+    .alphaDecay(0.24)
+    .velocityDecay(0.78)
+    .force("link", d3.forceLink(links).id(d => d.id).distance(260).strength(0.1))
+    .force("charge", d3.forceManyBody().strength(-1200))
     .force("center", d3.forceCenter(width() / 2, height() / 2))
-    .force("collide", d3.forceCollide(28))
+    .force("collide", d3.forceCollide(d => isHostNode(d) ? 44 : 34))
     .on("tick", ticked);
 
   sim.stop();
-  for (let i = 0; i < 100; i++) sim.tick();
+  for (let i = 0; i < 140; i++) sim.tick();
   ticked();
 
   node.on("click", async (event, d) => {
@@ -736,7 +743,7 @@ function drawGraph(data) {
 
 function drag() {
   function started(event, d) {
-    if (!event.active) sim.alphaTarget(0.09).restart();
+    if (!event.active) sim.alphaTarget(0.04).restart();
     d.fx = d.x;
     d.fy = d.y;
   }
