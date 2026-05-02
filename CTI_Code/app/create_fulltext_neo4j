@@ -22,6 +22,18 @@ CREATE FULLTEXT INDEX attackpattern_fulltext IF NOT EXISTS
 FOR (n:AttackPattern)
 ON EACH [n.name, n.mitre_id];
 
+CREATE FULLTEXT INDEX malware_fulltext IF NOT EXISTS
+FOR (n:Malware)
+ON EACH [n.name, n.aliases, n.description];
+
+CREATE FULLTEXT INDEX location_fulltext IF NOT EXISTS
+FOR (n:Location)
+ON EACH [n.name, n.country, n.region];
+
+CREATE FULLTEXT INDEX intrusionset_fulltext IF NOT EXISTS
+FOR (n:IntrusionSet)
+ON EACH [n.name, n.aliases, n.description];
+
 CREATE FULLTEXT INDEX mitre_intrusionset_fulltext IF NOT EXISTS
 FOR (n:MitreIntrusionSet)
 ON EACH [n.name, n.mitre_id, n.aliases];
