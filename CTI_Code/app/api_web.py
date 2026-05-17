@@ -295,15 +295,20 @@ def node_details(id: str, neigh_limit: int = 80):
 def search(q: str = Query(..., min_length=2), limit: int = 40):
     text = q.strip()
 
-    idx_rows = run(
-        """
-        SHOW FULLTEXT INDEXES
-        YIELD name, state
-        WHERE state='ONLINE'
-        RETURN collect(name) AS names
-        """
-    )
-    online_indexes = set((idx_rows[0].data().get("names") or []) if idx_rows else [])
+    online_indexes = set()
+    try:
+        idx_rows = run(
+            """
+            SHOW FULLTEXT INDEXES
+            YIELD name, state
+            WHERE state='ONLINE'
+            RETURN collect(name) AS names
+            """
+        )
+        online_indexes = set((idx_rows[0].data().get("names") or []) if idx_rows else [])
+    except HTTPException:
+        # Some Neo4j roles cannot execute SHOW FULLTEXT INDEXES; fallback query still works.
+        online_indexes = set()
 
     wanted = [
         "stix_fulltext",
