@@ -6,6 +6,7 @@ let sim = null;
 let currentNodeId = null;
 let currentSelectionKind = null;
 let currentPathMode = "all";
+let currentHighlightPath = false;
 
 const LIST_ENDPOINTS = {
   hosts: "/api/list/hosts?limit=500",
@@ -411,6 +412,77 @@ function edgeKey(a, b) {
   return `${a}::${b}`;
 }
 
+function annotateDirectHostPath(rawData, selectedNodeId, enabled) {
+  if (!enabled) return rawData;
+  const nodes = rawData?.nodes || [];
+  const edges = rawData?.edges || [];
+  if (!nodes.length || !edges.length) return rawData;
+
+  const nodesById = new Map(nodes.map(n => [n.id, n]));
+  const resolvedSelectedId = nodesById.has(selectedNodeId)
+    ? selectedNodeId
+    : resolveSelectedNodeId(nodes, selectedNodeId);
+  if (!resolvedSelectedId || !nodesById.has(resolvedSelectedId)) return rawData;
+
+  const adj = buildAdjacency(edges);
+  const dist = new Map([[resolvedSelectedId, 0]]);
+  const parent = new Map();
+  const q = [resolvedSelectedId];
+  let nearestHostDist = null;
+  const nearestHosts = [];
+
+  for (let i = 0; i < q.length; i++) {
+    const u = q[i];
+    const d = dist.get(u);
+    if (nearestHostDist !== null && d > nearestHostDist) break;
+
+    const nodeU = nodesById.get(u);
+    if (u !== resolvedSelectedId && nodeU && hasAnyLabel(nodeU, ["Host"])) {
+      if (nearestHostDist === null) nearestHostDist = d;
+      if (d === nearestHostDist) nearestHosts.push(u);
+      if (nearestHosts.length >= 4) break;
+      continue;
+    }
+
+    for (const n of adj.get(u) || []) {
+      const v = n.otherId;
+      if (dist.has(v)) continue;
+      dist.set(v, d + 1);
+      parent.set(v, u);
+      q.push(v);
+    }
+  }
+
+  const pathNodes = new Set([resolvedSelectedId]);
+  const pathEdges = new Set();
+  const addPathEdge = (a, b) => {
+    pathEdges.add(edgeKey(a, b));
+    pathEdges.add(edgeKey(b, a));
+  };
+
+  if (hasAnyLabel(nodesById.get(resolvedSelectedId), ["Host"])) {
+    nearestHosts.push(resolvedSelectedId);
+  }
+
+  for (const hid of nearestHosts) {
+    let cur = hid;
+    pathNodes.add(cur);
+    while (cur && cur !== resolvedSelectedId) {
+      const p = parent.get(cur);
+      if (!p) break;
+      pathNodes.add(p);
+      addPathEdge(p, cur);
+      cur = p;
+    }
+  }
+
+  return {
+    ...rawData,
+    nodes: nodes.map(n => ({ ...n, __pathFocus: pathNodes.has(n.id) })),
+    edges: edges.map(e => ({ ...e, __pathFocus: pathEdges.has(edgeKey(e.source, e.target)) })),
+  };
+}
+
 function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
   if (pathMode !== "hostPaths") return rawData;
   const nodes = rawData?.nodes || [];
@@ -438,7 +510,7 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
   };
 
   const dist = new Map([[resolvedSelectedId, 0]]);
-  const parents = new Map();
+  const parent = new Map();
   const q = [resolvedSelectedId];
   for (let i = 0; i < q.length; i++) {
     const u = q[i];
@@ -447,11 +519,8 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
       const v = n.otherId;
       if (!dist.has(v)) {
         dist.set(v, d + 1);
-        parents.set(v, new Set([u]));
+        parent.set(v, u);
         q.push(v);
-      } else if (dist.get(v) === d + 1) {
-        if (!parents.has(v)) parents.set(v, new Set());
-        parents.get(v).add(u);
       }
     }
   }
@@ -463,22 +532,30 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
 
   const minHostDist = Math.min(...hostReachableIds.map(id => dist.get(id)).filter(Number.isFinite));
   const selectedHosts = hostReachableIds
-    .filter(id => dist.get(id) === minHostDist)
-    .slice(0, 10);
+    .sort((a, b) => {
+      const da = dist.get(a);
+      const db = dist.get(b);
+      if (da !== db) return da - db;
+      return String(a).localeCompare(String(b));
+    })
+    .filter(id => dist.get(id) <= minHostDist + 1)
+    .slice(0, 8);
   if (!selectedHosts.length) return rawData;
 
   const focusNodes = new Set([resolvedSelectedId]);
   const focusEdges = new Set();
-  const backtrack = (nodeId) => {
-    focusNodes.add(nodeId);
-    if (nodeId === resolvedSelectedId) return;
-    for (const p of parents.get(nodeId) || []) {
+  const backtrackOnePath = (nodeId) => {
+    let cur = nodeId;
+    while (cur && cur !== resolvedSelectedId) {
+      focusNodes.add(cur);
+      const p = parent.get(cur);
+      if (!p) break;
       focusNodes.add(p);
-      addFocusEdge(p, nodeId);
-      backtrack(p);
+      addFocusEdge(p, cur);
+      cur = p;
     }
   };
-  for (const hid of selectedHosts) backtrack(hid);
+  for (const hid of selectedHosts) backtrackOnePath(hid);
   const corePathNodes = new Set(focusNodes);
 
   const cveIds = new Set();
@@ -504,12 +581,9 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
   for (const id of corePathNodes) addByLabel(id);
   addByLabel(resolvedSelectedId);
 
-  // 1) Triáda ThreatClass <-> (CVE|NVT) + CVE <-> NVT
-  const ctiSeed = new Set([...cveIds, ...nvtIds]);
-  const threatSeed = new Set(threatIds);
-  if (hasAnyLabel(selected, ["ThreatClass"])) threatSeed.add(resolvedSelectedId);
-
-  for (const sid of [...ctiSeed, ...threatSeed]) {
+  // 1) Obohacení cesty o nejbližší CTI souvislosti (bez "rozlití" do celého grafu)
+  const ctiSeed = new Set([...cveIds, ...nvtIds, ...threatIds]);
+  for (const sid of ctiSeed) {
     for (const n of adj.get(sid) || []) {
       const nid = n.otherId;
       const neigh = nodesById.get(nid);
@@ -529,7 +603,7 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
     }
   }
 
-  // 2) Z CTI uzlů vytáhneme aktéry a zpět navázané CTI
+  // 2) Z CTI uzlů vytáhneme aktéry a hosty.
   const ctiExpanded = new Set([...cveIds, ...nvtIds, ...threatIds]);
   for (const sid of ctiExpanded) {
     for (const n of adj.get(sid) || []) {
@@ -547,7 +621,7 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
     }
   }
 
-  // 3) Z aktérů navážeme AttackPattern + Location a udržíme CTI mezikrok
+  // 3) Z aktérů navážeme AttackPattern + Location a držíme jen přímé CTI vazby.
   for (const aid of actorIds) {
     for (const n of adj.get(aid) || []) {
       const nid = n.otherId;
@@ -572,7 +646,7 @@ function filterGraphForHostPaths(rawData, selectedNodeId, pathMode) {
     }
   }
 
-  // 4) Pokud je vybraný Location/AttackPattern, přes aktéry dotáhneme CTI vazby.
+  // 4) Pokud je vybraný Location/AttackPattern, přidáme přímou cestu Location/AttackPattern -> aktér -> CTI/Host.
   if (hasAnyLabel(selected, ["Location", "AttackPattern"])) {
     for (const n of adj.get(resolvedSelectedId) || []) {
       const aid = n.otherId;
@@ -753,19 +827,37 @@ function drawGraph(data) {
     .data(links)
     .join("line")
     .attr("stroke", d => edgeColor(d.type))
-    .attr("stroke-opacity", d => currentPathMode === "hostPaths" ? (d.__focus ? 0.52 : 0.06) : 0.28)
-    .attr("stroke-width", 1.6);
+    .attr("stroke-opacity", d => {
+      if (currentPathMode === "hostPaths") {
+        if (d.__pathFocus) return 0.96;
+        return d.__focus ? 0.34 : 0.04;
+      }
+      if (currentHighlightPath) return d.__pathFocus ? 0.96 : 0.05;
+      return 0.28;
+    })
+    .attr("stroke-width", d => {
+      if (d.__pathFocus) return 4.1;
+      if (currentPathMode === "hostPaths") return d.__focus ? 1.9 : 1.2;
+      return 1.6;
+    });
 
   const focusedLinksCount = links.filter(l => l.__focus).length;
+  const pathLinksCount = links.filter(l => l.__pathFocus).length;
   const showEdgeLabels = currentPathMode === "hostPaths"
     ? (focusedLinksCount > 0 && focusedLinksCount <= 180)
+    : currentHighlightPath
+      ? (pathLinksCount > 0 && pathLinksCount <= 120)
     : links.length <= 120;
   const edgeLabel = showEdgeLabels
     ? gEdgeLabels.selectAll("text")
       .data(links)
       .join("text")
       .text(d => d.type || "")
-      .attr("display", d => currentPathMode === "hostPaths" && !d.__focus ? "none" : null)
+      .attr("display", d => {
+        if (currentPathMode === "hostPaths" && !d.__focus) return "none";
+        if (currentHighlightPath && !d.__pathFocus) return "none";
+        return null;
+      })
       .attr("font-size", 9)
       .attr("font-weight", 700)
       .attr("fill", d => edgeColor(d.type))
@@ -778,10 +870,27 @@ function drawGraph(data) {
     .data(nodes)
     .join("circle")
     .attr("r", d => nodeRadius(d))
-    .attr("opacity", d => currentPathMode === "hostPaths" ? (d.__focus ? 1 : 0.18) : 1)
+    .attr("opacity", d => {
+      if (currentPathMode === "hostPaths") {
+        if (d.__pathFocus) return 1;
+        return d.__focus ? 0.92 : 0.14;
+      }
+      if (currentHighlightPath) return d.__pathFocus ? 1 : 0.2;
+      return 1;
+    })
     .attr("fill", d => nodeColor(d))
-    .attr("stroke", d => d.id === currentNodeId ? "#0b1020" : "#fff")
-    .attr("stroke-width", d => d.id === currentNodeId ? 3.2 : 1.2)
+    .attr("stroke", d => {
+      if (d.id === currentNodeId) return "#0b1020";
+      if (d.__pathFocus && currentHighlightPath) return "#000000";
+      if (d.__pathFocus && currentPathMode !== "all") return "#111827";
+      return "#fff";
+    })
+    .attr("stroke-width", d => {
+      if (d.id === currentNodeId) return 3.2;
+      if (d.__pathFocus && currentHighlightPath) return 3.6;
+      if (d.__pathFocus && currentPathMode !== "all") return 2.4;
+      return 1.2;
+    })
     .call(drag());
 
   node.append("title").text(d => `${nodeLabel(d)}\n${(d.labels || []).join(", ")}`);
@@ -791,7 +900,11 @@ function drawGraph(data) {
     .join("text")
     .text(d => nodeLabel(d))
     .style("cursor", "pointer")
-    .attr("display", d => currentPathMode === "hostPaths" && !d.__focus ? "none" : null)
+    .attr("display", d => {
+      if (currentPathMode === "hostPaths" && !d.__focus) return "none";
+      if (currentHighlightPath && !d.__pathFocus && d.id !== currentNodeId) return "none";
+      return null;
+    })
     .attr("font-size", d => d.id === currentNodeId ? 12 : 10)
     .attr("font-weight", d => d.id === currentNodeId ? 800 : 500)
     .attr("fill", d => d.id === currentNodeId ? "#111827" : "#273043")
@@ -921,7 +1034,8 @@ async function loadGraph(nodeId) {
     const filtered = currentPathMode === "hostPaths"
       ? hostFiltered
       : filterGraphForFocusedPath(hostFiltered, nodeId, hops, currentSelectionKind);
-    drawGraph(filtered);
+    const pathAnnotated = annotateDirectHostPath(filtered, nodeId, currentHighlightPath);
+    drawGraph(pathAnnotated);
     refreshListHighlights();
   } catch (err) {
     alert(err.message);
@@ -1083,6 +1197,13 @@ function bootstrapEvents() {
       if (currentNodeId) loadGraph(currentNodeId);
     });
   });
+  const highlightPath = document.getElementById("highlightPath");
+  if (highlightPath) {
+    highlightPath.addEventListener("change", () => {
+      currentHighlightPath = !!highlightPath.checked;
+      if (currentNodeId) loadGraph(currentNodeId);
+    });
+  }
 
   document.getElementById("ctxClose").addEventListener("click", () => {
     document.getElementById("ctx").style.display = "none";
